@@ -1,0 +1,12 @@
+# Enhanced115 插件依赖
+
+# 115网盘客户端库（必需）
+p115client==0.0.8.0.3
+
+# 依赖的子包会自动安装：
+# - p115cipher: 115加密解密
+# - p115oss: OSS上传支持
+# - p115pickcode: pickcode处理
+# - httpx: HTTP请求
+# - orjson: JSON处理
+
