@@ -387,11 +387,17 @@ class Enhanced115(_PluginBase):
             logger.warning(f"【Enhanced115】数据库更新失败：{filename}")
             return
         
-        # 3. 增加actual_count
-        self._task_manager.increment_actual_count(download_hash)
+        # 3. 查询数据库真实完成数量（不用内存计数）
+        actual_count = self._count_completed_files(download_hash)
+        expected_count = task_info.get('expected_count', 0)
         
-        # 4. 检查任务是否完成
-        if self._task_manager.is_task_complete(download_hash):
+        logger.info(
+            f"【Enhanced115】任务进度：{task_info['media_title']}，"
+            f"已完成={actual_count}/{expected_count}"
+        )
+        
+        # 4. 检查任务是否完成（基于数据库真实count）
+        if actual_count >= expected_count:
             logger.info(
                 f"【Enhanced115】任务完成：{task_info['media_title']}，"
                 f"开始分享（模式={task_info['share_mode']}）"
@@ -408,11 +414,12 @@ class Enhanced115(_PluginBase):
                 if share_result:
                     self._stats['shared'] += 1
                     
-                    # 6. Telegram通知
+                    # 6. Telegram通知（增强版：传递download_hash获取文件大小）
                     if self._telegram_enabled and self._telegram:
                         self._telegram.send_share_notification(
                             task_info,
-                            share_result
+                            share_result,
+                            download_hash
                         )
                     
                     # 7. 分享成功才移除任务
@@ -424,6 +431,132 @@ class Enhanced115(_PluginBase):
             else:
                 # 未启用分享，直接移除任务
                 self._task_manager.remove_task(download_hash)
+
+    def _check_pending_tasks(self):
+        """
+        定时检查所有待处理任务（核心自愈机制）
+        完全复制my_115_app的check_completed_tasks逻辑
+        
+        功能：
+        1. 获取所有pending任务
+        2. 查询数据库真实完成数量（不依赖内存count）
+        3. 对比expected_count，达到则触发分享
+        4. 程序重启后会自动恢复pending任务
+        """
+        if not self._enabled or not self._p115_client:
+            return
+        
+        try:
+            # 获取所有pending任务
+            pending_tasks = self._task_manager.get_all_pending_tasks()
+            
+            if not pending_tasks:
+                logger.debug("【Enhanced115】定时检查：无待处理任务")
+                return
+            
+            logger.info(f"【Enhanced115】定时检查：发现{len(pending_tasks)}个待处理任务")
+            
+            for download_hash, task_info in pending_tasks.items():
+                try:
+                    # 查询数据库真实完成数量（不用内存count）
+                    actual_count = self._count_completed_files(download_hash)
+                    expected_count = task_info.get('expected_count', 0)
+                    
+                    logger.debug(
+                        f"【Enhanced115】检查任务：{task_info.get('media_title')}，"
+                        f"实际完成={actual_count}，预期={expected_count}"
+                    )
+                    
+                    # 判断是否完成
+                    if actual_count >= expected_count:
+                        logger.info(
+                            f"【Enhanced115】任务已完成（定时发现）：{task_info.get('media_title')}，"
+                            f"开始分享（模式={task_info.get('share_mode')}）"
+                        )
+                        
+                        # 触发分享
+                        self._trigger_share(download_hash, task_info)
+                    else:
+                        logger.debug(
+                            f"【Enhanced115】任务未完成：{task_info.get('media_title')}，"
+                            f"还需{expected_count - actual_count}个文件"
+                        )
+                        
+                except Exception as e:
+                    logger.error(f"【Enhanced115】检查任务{download_hash}时出错：{e}")
+                    
+        except Exception as e:
+            logger.error(f"【Enhanced115】定时检查异常：{e}")
+
+    def _count_completed_files(self, download_hash: str) -> int:
+        """
+        查询数据库真实完成数量
+        完全复制my_115_app的逻辑：SELECT COUNT(*) FROM transferhistory
+        
+        优势：
+        - 不依赖内存计数（准确）
+        - 程序重启后依然正确
+        - 避免并发问题
+        
+        :param download_hash: 下载hash
+        :return: 已上传到115的文件数量
+        """
+        try:
+            from app.db.transferhistory_oper import TransferHistoryOper
+            
+            transferhis = TransferHistoryOper()
+            records = transferhis.list_by_hash(download_hash)
+            
+            # 统计dest_storage='u115'的记录数
+            count = sum(1 for record in records 
+                       if record.dest_storage == 'u115' and record.status)
+            
+            return count
+            
+        except Exception as e:
+            logger.error(f"【Enhanced115】统计完成文件数失败：{e}")
+            return 0
+
+    def _trigger_share(self, download_hash: str, task_info: dict):
+        """
+        触发分享（从定时检查调用）
+        
+        :param download_hash: 下载hash
+        :param task_info: 任务信息
+        """
+        try:
+            if not self._share_enabled or not self._sharer:
+                logger.debug("【Enhanced115】未启用分享，跳过")
+                self._task_manager.remove_task(download_hash)
+                return
+            
+            # 创建分享
+            share_result = self._sharer.create_share(
+                task_info,
+                download_hash,
+                None  # mediainfo在定时检查时不可用
+            )
+            
+            if share_result:
+                self._stats['shared'] += 1
+                
+                # Telegram通知（增强版：传递download_hash）
+                if self._telegram_enabled and self._telegram:
+                    self._telegram.send_share_notification(
+                        task_info,
+                        share_result,
+                        download_hash
+                    )
+                
+                # 分享成功才移除任务
+                self._task_manager.remove_task(download_hash)
+                logger.info(f"【Enhanced115】任务已完成并移除：{task_info.get('media_title')}")
+            else:
+                # 分享失败，保留任务，下次重试
+                logger.warning(f"【Enhanced115】分享失败，任务保留：{task_info.get('media_title')}")
+                
+        except Exception as e:
+            logger.error(f"【Enhanced115】触发分享失败：{e}")
 
     def get_state(self) -> bool:
         """获取插件运行状态"""
@@ -837,8 +970,22 @@ class Enhanced115(_PluginBase):
         return []
 
     def get_service(self) -> List[Dict[str, Any]]:
-        """注册插件服务"""
-        return []
+        """
+        注册插件定时服务
+        每5分钟检查一次pending任务，实现自愈能力
+        """
+        if not self._enabled:
+            return []
+        
+        return [{
+            "id": "Enhanced115.check_pending_tasks",
+            "name": "检查待处理任务",
+            "trigger": "interval",
+            "func": self._check_pending_tasks,
+            "kwargs": {
+                "seconds": 300  # 每5分钟执行一次
+            }
+        }]
 
     def stop_service(self):
         """停止插件服务"""
