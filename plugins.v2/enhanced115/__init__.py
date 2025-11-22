@@ -30,6 +30,7 @@ from .database import DatabaseHandler
 from .telegram_notifier import TelegramNotifier
 from .task_analyzer import TaskAnalyzer
 from .task_manager import TaskManager
+from .password_strategy import PasswordStrategy
 from .utils import map_local_to_remote, parse_path_mappings
 
 
@@ -56,8 +57,15 @@ class Enhanced115(_PluginBase):
         
         # 分享配置
         self._share_enabled = False
-        self._share_duration = -1
-        self._share_password = None
+        self._share_modify_enabled = True  # 是否修改分享设置
+        self._file_duration = 15  # file模式有效期
+        self._folder_duration = -1  # folder模式有效期
+        self._password_strategy = 'keep_initial'  # 密码策略
+        self._password_value = ''  # 密码值
+        self._receive_user_limit = 0  # 接收次数限制
+        self._skip_login_enabled = False  # 免登录下载
+        self._skip_login_limit = ''  # 流量限制
+        self._access_user_ids = ''  # 指定接收者
         
         # Telegram配置
         self._telegram_enabled = False
