@@ -115,16 +115,17 @@ class TaskAnalyzer:
             
             # 使用原始SQL查询（最可靠的方式）
             from app.db import SessionFactory
+            from sqlalchemy import text
             
             with SessionFactory() as session:
-                # 直接SQL查询
-                sql = """
+                # SQL查询必须用text()包装
+                sql = text("""
                     SELECT text FROM message 
                     WHERE mtype = '资源下载' 
                       AND text LIKE :pattern 
                     ORDER BY reg_time DESC 
                     LIMIT 1
-                """
+                """)
                 result = session.execute(sql, {'pattern': f'%{torrent_name}%'})
                 row = result.fetchone()
                 

@@ -56,7 +56,17 @@ class Upload115Handler:
             # 检查秒传
             if isinstance(uploader, dict):
                 logger.info(f"【Enhanced115】{filename} 秒传成功")
-                file_info = self._get_file_info(remote_path)
+                # 从秒传响应中提取文件信息
+                data = uploader.get('data', {})
+                file_info = {
+                    'storage': 'u115',
+                    'fileid': str(data.get('id', '')),
+                    'pickcode': data.get('pickcode', ''),
+                    'path': remote_path,
+                    'name': filename,
+                    'type': 'file'
+                }
+                logger.info(f"【Enhanced115】秒传file_info：{file_info}")
                 return True, file_info
             
             # 分片上传
@@ -78,7 +88,17 @@ class Upload115Handler:
             
             if result.get('state'):
                 logger.info(f"【Enhanced115】{filename} 上传完成")
-                file_info = self._get_file_info(remote_path)
+                # 从上传完成响应中提取文件信息
+                data = result.get('data', {})
+                file_info = {
+                    'storage': 'u115',
+                    'fileid': str(data.get('file_id', '')),
+                    'pickcode': data.get('pickcode', ''),
+                    'path': remote_path,
+                    'name': filename,
+                    'type': 'file'
+                }
+                logger.info(f"【Enhanced115】上传file_info：{file_info}")
                 return True, file_info
             else:
                 logger.error(f"【Enhanced115】{filename} 上传失败：{result.get('error')}")
