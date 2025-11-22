@@ -31,9 +31,10 @@ class TelegramNotifier:
         self._init_tmdb()
     
     def _init_tmdb(self):
-        """初始化TMDB客户端（完全复制my_115_app）"""
+        """初始化TMDB客户端（使用MoviePilot的内部tmdbv3api）"""
         try:
-            from tmdbv3api import TMDb, TV, Movie
+            # 使用MoviePilot内部的tmdbv3api模块
+            from app.modules.themoviedb.tmdbv3api import TMDb, TV, Movie
             
             # 从MoviePilot获取TMDB配置
             from app.core.config import settings
