@@ -25,7 +25,7 @@ class DatabaseHandler:
         
         try:
             from app.db.transferhistory_oper import TransferHistoryOper
-            from app.db import db
+            from app.db import SessionFactory
             
             transferhis = TransferHistoryOper()
             records = transferhis.list_by_hash(download_hash)
@@ -36,17 +36,21 @@ class DatabaseHandler:
             
             # 更新所有相关记录（可能是多集）
             updated_count = 0
-            for record in records:
-                try:
-                    # 使用ORM update方法
-                    record.update(db, {
-                        'dest_storage': 'u115',
-                        'dest': remote_path,
-                        'dest_fileitem': file_info
-                    })
-                    updated_count += 1
-                except Exception as e:
-                    logger.error(f"【Enhanced115】更新记录失败：{record.id}，错误：{e}")
+            with SessionFactory() as session:
+                for record in records:
+                    try:
+                        # 使用ORM update方法
+                        record.update(session, {
+                            'dest_storage': 'u115',
+                            'dest': remote_path,
+                            'dest_fileitem': file_info
+                        })
+                        updated_count += 1
+                    except Exception as e:
+                        logger.error(f"【Enhanced115】更新记录失败：{record.id}，错误：{e}")
+                
+                # 提交事务
+                session.commit()
             
             if updated_count > 0:
                 logger.info(f"【Enhanced115】数据库已更新：{download_hash}，{updated_count}条记录")
