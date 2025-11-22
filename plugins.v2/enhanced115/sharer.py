@@ -141,14 +141,29 @@ class Share115Handler:
             records = transferhis.list_by_hash(download_hash)
             
             file_ids = []
+            logger.info(f"【Enhanced115】查询到{len(records)}条记录")
+            
             for record in records:
-                if record.dest_storage == 'u115' and record.dest_fileitem:
-                    fileid = record.dest_fileitem.get('fileid')
-                    if fileid:
-                        file_ids.append(str(fileid))
+                logger.debug(f"【Enhanced115】记录：dest_storage={record.dest_storage}, dest={record.dest}")
+                
+                if record.dest_storage == 'u115':
+                    if record.dest_fileitem:
+                        logger.debug(f"【Enhanced115】dest_fileitem类型：{type(record.dest_fileitem)}")
+                        logger.debug(f"【Enhanced115】dest_fileitem内容：{record.dest_fileitem}")
+                        
+                        fileid = record.dest_fileitem.get('fileid') if isinstance(record.dest_fileitem, dict) else None
+                        if fileid:
+                            file_ids.append(str(fileid))
+                            logger.info(f"【Enhanced115】找到文件ID：{fileid}")
+                        else:
+                            logger.warning(f"【Enhanced115】dest_fileitem中无fileid字段")
+                    else:
+                        logger.warning(f"【Enhanced115】dest_fileitem为空")
+                else:
+                    logger.warning(f"【Enhanced115】dest_storage不是u115：{record.dest_storage}")
             
             if not file_ids:
-                logger.error("【Enhanced115】未找到文件ID")
+                logger.error("【Enhanced115】未找到任何文件ID")
                 return None
             
             # 创建打包分享
