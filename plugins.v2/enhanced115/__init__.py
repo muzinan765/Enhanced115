@@ -108,10 +108,17 @@ class Enhanced115(_PluginBase):
         self._upload_threads = int(config.get("upload_threads", 3))
         self._path_mappings = parse_path_mappings(config.get("path_mappings", ""))
         
-        # 分享配置
+        # 分享配置（完整）
         self._share_enabled = config.get("share_enabled", False)
-        self._share_duration = int(config.get("share_duration", -1))
-        self._share_password = config.get("share_password", "")
+        self._share_modify_enabled = config.get("share_modify_enabled", True)
+        self._file_duration = int(config.get("file_duration", 15))
+        self._folder_duration = int(config.get("folder_duration", -1))
+        self._password_strategy = config.get("password_strategy", "keep_initial")
+        self._password_value = config.get("password_value", "")
+        self._receive_user_limit = int(config.get("receive_user_limit", 0))
+        self._skip_login_enabled = config.get("skip_login_enabled", False)
+        self._skip_login_limit = config.get("skip_login_limit", "")
+        self._access_user_ids = config.get("access_user_ids", "")
         self._movie_root_cid = config.get("movie_root_cid", "")
         self._tv_root_cid = config.get("tv_root_cid", "")
         
@@ -141,8 +148,15 @@ class Enhanced115(_PluginBase):
             
             if self._share_enabled:
                 share_config = {
-                    'share_duration': self._share_duration,
-                    'share_password': self._share_password,
+                    'share_modify_enabled': self._share_modify_enabled,
+                    'file_duration': self._file_duration,
+                    'folder_duration': self._folder_duration,
+                    'password_strategy': self._password_strategy,
+                    'password_value': self._password_value,
+                    'receive_user_limit': self._receive_user_limit,
+                    'skip_login_enabled': self._skip_login_enabled,
+                    'skip_login_limit': self._skip_login_limit,
+                    'access_user_ids': self._access_user_ids,
                     'movie_root_cid': self._movie_root_cid,
                     'tv_root_cid': self._tv_root_cid
                 }
@@ -497,37 +511,153 @@ class Enhanced115(_PluginBase):
                         'content': [
                             {
                                 'component': 'VCol',
-                                'props': {'cols': 12, 'md': 4},
+                                'props': {'cols': 12, 'md': 6},
                                 'content': [{
                                     'component': 'VSwitch',
                                     'props': {
                                         'model': 'share_enabled',
-                                        'label': '启用自动分享'
+                                        'label': '启用自动分享',
+                                        'hint': '上传完成后自动创建分享'
                                     }
                                 }]
                             },
                             {
                                 'component': 'VCol',
-                                'props': {'cols': 12, 'md': 4},
+                                'props': {'cols': 12, 'md': 6},
+                                'content': [{
+                                    'component': 'VSwitch',
+                                    'props': {
+                                        'model': 'share_modify_enabled',
+                                        'label': '启用分享修改',
+                                        'hint': '关闭则使用115默认设置'
+                                    }
+                                }]
+                            }
+                        ]
+                    },
+                    # 有效期配置
+                    {
+                        'component': 'VRow',
+                        'content': [
+                            {
+                                'component': 'VCol',
+                                'props': {'cols': 12, 'md': 6},
                                 'content': [{
                                     'component': 'VTextField',
                                     'props': {
-                                        'model': 'share_duration',
-                                        'label': '有效期(天)',
+                                        'model': 'file_duration',
+                                        'label': 'File模式有效期(天)',
                                         'type': 'number',
-                                        'hint': '-1=永久'
+                                        'hint': '文件打包分享的有效期，-1=永久'
                                     }
                                 }]
                             },
                             {
                                 'component': 'VCol',
-                                'props': {'cols': 12, 'md': 4},
+                                'props': {'cols': 12, 'md': 6},
                                 'content': [{
                                     'component': 'VTextField',
                                     'props': {
-                                        'model': 'share_password',
-                                        'label': '提取码',
-                                        'hint': '4位或留空'
+                                        'model': 'folder_duration',
+                                        'label': 'Folder模式有效期(天)',
+                                        'type': 'number',
+                                        'hint': '文件夹分享的有效期，-1=永久'
+                                    }
+                                }]
+                            }
+                        ]
+                    },
+                    # 密码策略
+                    {
+                        'component': 'VRow',
+                        'content': [
+                            {
+                                'component': 'VCol',
+                                'props': {'cols': 12, 'md': 6},
+                                'content': [{
+                                    'component': 'VSelect',
+                                    'props': {
+                                        'model': 'password_strategy',
+                                        'label': '密码策略',
+                                        'items': [
+                                            {'title': '保留初始密码', 'value': 'keep_initial'},
+                                            {'title': '固定密码', 'value': 'fixed'},
+                                            {'title': '列表随机', 'value': 'random_list'},
+                                            {'title': '无密码', 'value': 'empty'},
+                                            {'title': '完全随机', 'value': 'random_generate'}
+                                        ],
+                                        'hint': '选择密码生成策略'
+                                    }
+                                }]
+                            },
+                            {
+                                'component': 'VCol',
+                                'props': {'cols': 12, 'md': 6},
+                                'content': [{
+                                    'component': 'VTextField',
+                                    'props': {
+                                        'model': 'password_value',
+                                        'label': '密码值',
+                                        'hint': '固定: "1234", 列表: ["1111","2222"]'
+                                    }
+                                }]
+                            }
+                        ]
+                    },
+                    # 高级限制
+                    {
+                        'component': 'VRow',
+                        'content': [
+                            {
+                                'component': 'VCol',
+                                'props': {'cols': 12, 'md': 6},
+                                'content': [{
+                                    'component': 'VTextField',
+                                    'props': {
+                                        'model': 'receive_user_limit',
+                                        'label': '接收次数限制',
+                                        'type': 'number',
+                                        'hint': '0=不限制'
+                                    }
+                                }]
+                            },
+                            {
+                                'component': 'VCol',
+                                'props': {'cols': 12, 'md': 6},
+                                'content': [{
+                                    'component': 'VSwitch',
+                                    'props': {
+                                        'model': 'skip_login_enabled',
+                                        'label': '启用免登录下载'
+                                    }
+                                }]
+                            }
+                        ]
+                    },
+                    {
+                        'component': 'VRow',
+                        'content': [
+                            {
+                                'component': 'VCol',
+                                'props': {'cols': 12, 'md': 6},
+                                'content': [{
+                                    'component': 'VTextField',
+                                    'props': {
+                                        'model': 'skip_login_limit',
+                                        'label': '免登录流量限制(字节)',
+                                        'hint': '空=不限，或如：10737418240(10GB)'
+                                    }
+                                }]
+                            },
+                            {
+                                'component': 'VCol',
+                                'props': {'cols': 12, 'md': 6},
+                                'content': [{
+                                    'component': 'VTextField',
+                                    'props': {
+                                        'model': 'access_user_ids',
+                                        'label': '指定接收者ID',
+                                        'hint': '空=所有人，或"id1,id2"'
                                     }
                                 }]
                             }
@@ -608,8 +738,15 @@ class Enhanced115(_PluginBase):
             'upload_threads': 3,
             'path_mappings': '[{"local":"/media","remote":"/Emby"}]',
             'share_enabled': False,
-            'share_duration': -1,
-            'share_password': '',
+            'share_modify_enabled': True,
+            'file_duration': 15,
+            'folder_duration': -1,
+            'password_strategy': 'keep_initial',
+            'password_value': '',
+            'receive_user_limit': 0,
+            'skip_login_enabled': False,
+            'skip_login_limit': '',
+            'access_user_ids': '',
             'movie_root_cid': '',
             'tv_root_cid': '',
             'telegram_enabled': False,
@@ -712,4 +849,6 @@ class Enhanced115(_PluginBase):
             logger.info("【Enhanced115】已停止")
             
         except Exception as e:
+            logger.error(f"【Enhanced115】停止服务时出错：{e}")
+
             logger.error(f"【Enhanced115】停止服务时出错：{e}")
