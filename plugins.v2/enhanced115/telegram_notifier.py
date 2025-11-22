@@ -1,16 +1,20 @@
 """
-Telegram通知模块（增强版）
-参考my_115_app的notifier.py，适配MoviePilot插件环境
+Telegram通知模块
+完全复制my_115_app的notifier.py逻辑（一点不差）
 """
 import re
 import math
-from typing import Dict, Optional
+from typing import Dict, Optional, List, Any, Tuple
 
 from app.log import logger
 
 
+# 标签黑名单（完全复制my_115_app）
+TAG_BLACKLIST = {"官方", "原创", "官字组", "禁转", "限转", "首发", "应求", "零魔"}
+
+
 class TelegramNotifier:
-    """Telegram通知处理类（增强版）"""
+    """Telegram通知处理类（完全复制my_115_app）"""
     
     def __init__(self, bot_token: str, chat_id: str):
         """
@@ -20,22 +24,41 @@ class TelegramNotifier:
         """
         self.bot_token = bot_token
         self.chat_id = chat_id
+        
+        # 初始化TMDB客户端
+        self.tmdb_tv = None
+        self.tmdb_movie = None
+        self._init_tmdb()
+    
+    def _init_tmdb(self):
+        """初始化TMDB客户端（完全复制my_115_app）"""
+        try:
+            from tmdbv3api import TMDb, TV, Movie
+            
+            # 从MoviePilot获取TMDB配置
+            from app.core.config import settings
+            
+            if settings.TMDB_API_KEY:
+                tmdb = TMDb()
+                tmdb.api_key = settings.TMDB_API_KEY
+                tmdb.language = 'zh-CN'
+                self.tmdb_tv = TV()
+                self.tmdb_movie = Movie()
+                logger.info("【Enhanced115】TMDB服务初始化成功")
+            else:
+                logger.warning("【Enhanced115】未配置TMDB API Key")
+        except Exception as e:
+            logger.warning(f"【Enhanced115】TMDB初始化失败：{e}")
     
     @staticmethod
     def _telegram_escape(text: str) -> str:
-        """
-        对文本进行Telegram MarkdownV2格式的转义
-        完全复制my_115_app的逻辑
-        """
+        """对文本进行Telegram MarkdownV2格式的转义（完全复制my_115_app）"""
         escape_chars = r'_*[]()~`>#+-=|{}.!'
         return re.sub(f'([{re.escape(escape_chars)}])', r'\\\1', text)
     
     @staticmethod
     def _format_bytes(size_bytes: int) -> str:
-        """
-        将字节大小格式化为人类可读的字符串
-        完全复制my_115_app的逻辑
-        """
+        """将字节大小格式化为人类可读的字符串（完全复制my_115_app）"""
         if size_bytes <= 0:
             return "0B"
         size_name = ("B", "KB", "MB", "GB", "TB")
@@ -44,141 +67,266 @@ class TelegramNotifier:
         s = round(size_bytes / p, 2)
         return f"{s}{size_name[i]}"
     
-    def _get_tmdb_poster(self, tmdb_id: int, is_movie: bool) -> Optional[str]:
-        """
-        从TMDB获取海报URL
-        使用MoviePilot的TheMovieDbModule
-        
-        :param tmdb_id: TMDB ID
-        :param is_movie: 是否电影
-        :return: 海报URL或None
-        """
-        try:
-            from app.modules.themoviedb import TheMovieDbModule
-            
-            tmdb_module = TheMovieDbModule()
-            
-            # 根据类型调用不同的API
-            if is_movie:
-                detail = tmdb_module.movie_detail(tmdbid=tmdb_id)
-            else:
-                detail = tmdb_module.tv_detail(tmdbid=tmdb_id)
-            
-            if detail and detail.get('poster_path'):
-                # 返回w500大小的海报
-                return f"https://image.tmdb.org/t/p/w500{detail['poster_path']}"
-            
-        except Exception as e:
-            logger.debug(f"【Enhanced115】获取TMDB海报失败：{e}")
-        
-        return None
-    
-    def _get_total_size(self, download_hash: str) -> int:
-        """
-        获取任务的总文件大小
-        
-        :param download_hash: 下载hash
-        :return: 总大小（字节）
-        """
-        try:
-            from app.db.transferhistory_oper import TransferHistoryOper
-            
-            transferhis = TransferHistoryOper()
-            records = transferhis.list_by_hash(download_hash)
-            
-            total_size = 0
-            for record in records:
-                if record.dest_storage == 'u115' and record.dest_fileitem:
-                    size = record.dest_fileitem.get('size', 0)
-                    if isinstance(size, (int, float)):
-                        total_size += int(size)
-            
-            return total_size
-            
-        except Exception as e:
-            logger.debug(f"【Enhanced115】获取文件大小失败：{e}")
+    @staticmethod
+    def _parse_size_to_bytes(size_val: Any) -> int:
+        """将大小字符串转换为字节（完全复制my_115_app）"""
+        if isinstance(size_val, (int, float)):
+            return int(size_val)
+        if not isinstance(size_val, str):
             return 0
+        
+        size_str = size_val.upper().strip()
+        units = {"K": 1024, "M": 1024**2, "G": 1024**3, "T": 1024**4}
+        unit_char = ""
+        
+        if size_str.endswith("B"):
+            size_str = size_str[:-1]
+        if size_str and size_str[-1] in units:
+            unit_char = size_str[-1]
+            num_str = size_str[:-1].strip()
+        else:
+            num_str = size_str
+        
+        try:
+            num = float(num_str)
+            multiplier = units.get(unit_char, 1)
+            return int(num * multiplier)
+        except (ValueError, TypeError):
+            return 0
+    
+    def get_notification_context(self, download_hash: str, task_info: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        获取通知上下文（完全复制my_115_app的_get_notification_context）
+        """
+        context = {}
+        
+        # 步骤1：获取TMDB海报
+        try:
+            tmdb_id_str = task_info.get('tmdb_id')
+            is_movie = task_info.get('is_movie', False)
+            
+            if tmdb_id_str and (self.tmdb_tv or self.tmdb_movie):
+                tmdb_id = int(tmdb_id_str)
+                details = None
+                
+                # 根据类型调用不同的TMDB API
+                if is_movie and self.tmdb_movie:
+                    details = self.tmdb_movie.details(tmdb_id)
+                elif not is_movie and self.tmdb_tv:
+                    details = self.tmdb_tv.details(tmdb_id)
+                
+                # 如果成功获取到详情且海报路径存在
+                if details and hasattr(details, 'poster_path') and details.poster_path:
+                    context['image_url'] = f"https://image.tmdb.org/t/p/w500{details.poster_path}"
+                    logger.info(f"【Enhanced115】成功获取TMDB海报")
+                else:
+                    context['image_url'] = None
+            else:
+                context['image_url'] = None
+        except Exception as e:
+            logger.warning(f"【Enhanced115】获取TMDB海报失败：{e}")
+            context['image_url'] = None
+        
+        # 步骤2：从message表获取并重组通知文本
+        try:
+            from app.db import SessionFactory
+            from sqlalchemy import text
+            
+            with SessionFactory() as session:
+                # 2.1: 获取torrent_name
+                sql_get_torrent = text("""
+                    SELECT torrent_name FROM downloadhistory 
+                    WHERE download_hash = :hash LIMIT 1
+                """)
+                result = session.execute(sql_get_torrent, {'hash': download_hash})
+                dh_record = result.fetchone()
+                
+                if not dh_record or not dh_record[0]:
+                    return context
+                
+                torrent_name = dh_record[0]
+                
+                # 2.2: 查找message（完全复制my_115_app的SQL）
+                sql_find_message = text("""
+                    SELECT title, text, image
+                    FROM message
+                    WHERE mtype = '资源下载' AND text LIKE '%' || '*原始名称*｜' || :torrent_name || '%'
+                    ORDER BY reg_time DESC LIMIT 1
+                """)
+                result = session.execute(sql_find_message, {'torrent_name': torrent_name})
+                msg_record = result.fetchone()
+                
+                if msg_record:
+                    # 解析message内容（完全复制my_115_app的逻辑）
+                    raw_title = msg_record[0] or ''
+                    text_content = msg_record[1] or ''
+                    image_url = msg_record[2] or ''
+                    
+                    # 提取标题（移除"*下载开始*｜"前缀）
+                    title_text = re.sub(r'^.*?\*下载开始\*\s*｜\s*', '', raw_title).strip()
+                    
+                    text_lines = text_content.split('\n')
+                    new_title_line = ""
+                    other_lines = []
+                    has_tag_line = False
+                    
+                    for line in text_lines:
+                        # 移除所有旧的星号
+                        line_stripped = line.strip().replace('*', '')
+                        if not line_stripped:
+                            continue
+                        
+                        # 解析"类型｜"行
+                        if '类型｜' in line_stripped:
+                            try:
+                                parts = line_stripped.split('类型｜')
+                                original_emoji = parts[0].strip()
+                                type_content = parts[1].strip()
+                                
+                                # 提取括号内容
+                                match = re.search(r'[（\(](.*?)[）\)]', type_content)
+                                extracted_type = match.group(1) if match else type_content
+                                
+                                new_title_line = f"{original_emoji} {extracted_type}｜{title_text}"
+                            except Exception as e:
+                                logger.warning(f"【Enhanced115】解析类型行失败：{e}")
+                                new_title_line = line_stripped
+                        
+                        # 过滤"原始名称"和"内容简介"
+                        elif '原始名称｜' in line_stripped:
+                            continue
+                        elif '内容简介｜' in line_stripped:
+                            continue
+                        
+                        # 解析标签行
+                        elif '标签｜' in line_stripped:
+                            has_tag_line = True
+                            try:
+                                parts = line_stripped.split('｜', 1)
+                                key = parts[0].strip()
+                                value = parts[1].strip()
+                                
+                                # 过滤黑名单标签
+                                tags = [t.strip() for t in value.split() 
+                                       if t.strip() and t.strip() not in TAG_BLACKLIST]
+                                
+                                if tags:
+                                    other_lines.append(f"{key}｜{' '.join(tags)}")
+                            except Exception as e:
+                                logger.warning(f"【Enhanced115】解析标签行失败：{e}")
+                        
+                        # 保留其他所有行
+                        else:
+                            other_lines.append(line_stripped)
+                    
+                    # 动态生成标签（如果message中没有）
+                    if not has_tag_line:
+                        match = re.search(r'\[([^\]]+)\]\s*$', torrent_name)
+                        if match:
+                            tags_content = match.group(1)
+                            tags = [t.strip() for t in tags_content.split('|') 
+                                   if t.strip() and t.strip() not in TAG_BLACKLIST]
+                            if tags:
+                                other_lines.append(f"🏷️ 标签｜{' '.join(tags)}")
+                    
+                    # 格式化：使用占位符标记加粗
+                    formatted_other_lines = []
+                    for line in other_lines:
+                        parts = line.split('｜', 1)
+                        if len(parts) == 2:
+                            key = parts[0].strip()
+                            value = parts[1].strip()
+                            formatted_other_lines.append(f"__BOLD_START__{key}__BOLD_END__｜{value}")
+                        else:
+                            formatted_other_lines.append(line)
+                    
+                    # 标记标题行
+                    if new_title_line:
+                        new_title_line = f"__BOLD_START__{new_title_line}__BOLD_END__"
+                    else:
+                        new_title_line = f"__BOLD_START__{title_text}__BOLD_END__"
+                    
+                    # 拼接：标题 + 空行 + 信息块
+                    context['notification_text'] = f"{new_title_line}\n\n" + "\n".join(formatted_other_lines)
+                    
+                    # 备用图片
+                    if not context.get('image_url') and image_url:
+                        context['image_url'] = image_url
+        
+        except Exception as e:
+            logger.error(f"【Enhanced115】获取通知上下文失败：{e}")
+        
+        return context
     
     def send_share_notification(self, task_info: Dict, share_info: Dict, 
                                download_hash: Optional[str] = None) -> bool:
         """
-        发送增强版分享通知
-        
-        改进：
-        1. ✅ 添加TMDB海报图片
-        2. ✅ MarkdownV2格式化
-        3. ✅ 显示文件总大小
-        4. ✅ 更美观的消息格式
+        发送分享通知（完全复制my_115_app的send_telegram_notification）
         
         :param task_info: 任务信息
         :param share_info: 分享信息
-        :param download_hash: 下载hash（可选，用于获取文件大小）
+        :param download_hash: 下载hash（必需）
         :return: 是否成功
         """
         if not self.bot_token or not self.chat_id:
             return False
         
+        if not download_hash:
+            logger.warning("【Enhanced115】缺少download_hash，无法构建完整通知")
+            return False
+        
         try:
-            import httpx
+            # 获取完整的通知上下文（完全复制my_115_app）
+            task_context = self.get_notification_context(download_hash, task_info)
             
-            # 基础信息
-            media_title = task_info.get('media_title', '未知')
-            share_mode = task_info.get('share_mode', 'file')
-            tmdb_id = task_info.get('tmdb_id', 0)
-            is_movie = task_info.get('is_movie', False)
-            share_url = share_info.get('share_url', '')
-            password = share_info.get('password', '')
+            caption_text = ""
+            poster_url = task_context.get('image_url', '')
+            title_for_log = task_info.get('media_title', '未知')
             
-            # 构建标题
-            media_type = "🎬 电影" if is_movie else "📺 剧集"
-            title_line = f"*{self._telegram_escape(media_type)}｜{self._telegram_escape(media_title)}*"
+            # 使用notification_text（完全复制my_115_app的逻辑）
+            if task_context.get('notification_text'):
+                # 1. 获取包含占位符的原始文本
+                raw_notification_text = task_context['notification_text']
+                
+                # 2. 先转义
+                escaped_text = self._telegram_escape(raw_notification_text)
+                
+                # 3. 后替换占位符
+                caption_text = escaped_text.replace(r"\_\_BOLD\_START\_\_", "*").replace(r"\_\_BOLD\_END\_\_", "*")
+                
+                # 4. 加空行
+                caption_text += "\n\n"
+            else:
+                # 备用：简单格式
+                logger.warning("【Enhanced115】未获取到notification_text，使用简单格式")
+                media_title = task_info.get('media_title', '未知')
+                share_mode = task_info.get('share_mode', 'file')
+                mode_text = "文件夹分享" if share_mode == 'folder' else "文件打包分享"
+                
+                caption_text = f"*{self._telegram_escape(media_title)}*\n\n"
+                caption_text += f"▪️ *{self._telegram_escape('模式')}*: `{mode_text}`\n\n"
             
-            # 构建消息体
-            message_lines = [title_line, ""]  # 标题后空一行
+            # 拼接分享链接（完全复制my_115_app）
+            share_url = share_info.get("share_url", "")
+            share_password = share_info.get("password", "")
             
-            # 添加分享模式
-            mode_text = "文件夹分享" if share_mode == 'folder' else "文件打包分享"
-            message_lines.append(f"▪️ *{self._telegram_escape('模式')}*: `{mode_text}`")
+            if share_password and share_password not in ["无", "无 (已尝试设置)"]:
+                final_share_url = f"{share_url}?password={share_password}"
+            else:
+                final_share_url = share_url
             
-            # 添加文件大小（如果有download_hash）
-            if download_hash:
-                total_size = self._get_total_size(download_hash)
-                if total_size > 0:
-                    size_str = self._format_bytes(total_size)
-                    message_lines.append(f"▪️ *{self._telegram_escape('大小')}*: `{size_str}`")
+            caption_text += f"▪️ *{self._telegram_escape('链接')}*: [{self._telegram_escape('点击转存')}]({final_share_url})"
             
-            # 空行
-            message_lines.append("")
-            
-            # 添加分享链接
-            final_share_url = f"{share_url}?password={password}" if password else share_url
-            link_text = self._telegram_escape("点击转存")
-            message_lines.append(f"▪️ *{self._telegram_escape('链接')}*: [{link_text}]({final_share_url})")
-            
-            # 合并消息
-            caption_text = "\n".join(message_lines)
-            
-            # 尝试获取海报
-            poster_url = None
-            if tmdb_id and tmdb_id > 0:
-                poster_url = self._get_tmdb_poster(tmdb_id, is_movie)
-            
-            # 发送通知
+            # 发送通知（完全复制my_115_app）
             import asyncio
-            return asyncio.run(self._send_async(caption_text, poster_url))
+            return asyncio.run(self._send_async(caption_text, poster_url, title_for_log))
             
         except Exception as e:
             logger.error(f"【Enhanced115】Telegram通知异常：{e}")
             return False
     
-    async def _send_async(self, caption_text: str, poster_url: Optional[str]) -> bool:
-        """
-        异步发送Telegram消息
-        
-        :param caption_text: 消息文本
-        :param poster_url: 海报URL（可选）
-        :return: 是否成功
-        """
+    async def _send_async(self, caption_text: str, poster_url: Optional[str], title_for_log: str) -> bool:
+        """异步发送Telegram消息（完全复制my_115_app）"""
         try:
             import httpx
             
@@ -204,12 +352,13 @@ class TelegramNotifier:
                 response = await client.post(api_url, json=payload)
                 
                 if response.status_code == 200:
-                    logger.info("【Enhanced115】Telegram通知发送成功")
+                    logger.info(f"【Enhanced115】成功为任务 '{title_for_log}' 发送Telegram通知")
                     return True
                 else:
-                    logger.error(f"【Enhanced115】Telegram发送失败：{response.status_code}, {response.text}")
+                    logger.error(f"【Enhanced115】发送Telegram通知失败：{response.text}")
+                    logger.error(f"【Enhanced115】失败的Payload (已截断): {str(payload)[:500]}")
                     return False
                     
         except Exception as e:
-            logger.error(f"【Enhanced115】Telegram发送异常：{e}")
+            logger.error(f"【Enhanced115】发送Telegram通知时发生异常：{e}")
             return False

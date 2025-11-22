@@ -28,7 +28,7 @@ class Upload115Handler:
         """
         try:
             from p115client.tool import P115MultipartUpload
-            from p115client import check_response
+            from p115client import check_response, P115OSError
             
             if not local_path.exists():
                 logger.error(f"【Enhanced115】本地文件不存在：{local_path}")

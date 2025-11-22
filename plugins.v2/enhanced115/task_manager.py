@@ -113,14 +113,29 @@ class TaskManager:
     def get_all_pending_tasks(self) -> Dict[str, Any]:
         """获取所有待处理任务"""
         # 获取所有以task_前缀开头的数据
-        all_data = self.data_ops.get_data() or {}
+        # 注意：get_data()不带key时返回的是list of PluginData对象
+        all_data = self.data_ops.get_data() or []
         
         pending_tasks = {}
-        for key, value in all_data.items():
-            if key.startswith(self._task_key_prefix):
-                download_hash = key[len(self._task_key_prefix):]
-                if isinstance(value, dict) and value.get('status') == 'pending':
-                    pending_tasks[download_hash] = value
+        
+        # 处理list格式（MoviePilot的get_data返回PluginData对象列表）
+        if isinstance(all_data, list):
+            for item in all_data:
+                # item是PluginData对象，有key和value属性
+                if hasattr(item, 'key') and hasattr(item, 'value'):
+                    key = item.key
+                    value = item.value
+                    if key.startswith(self._task_key_prefix):
+                        download_hash = key[len(self._task_key_prefix):]
+                        if isinstance(value, dict) and value.get('status') == 'pending':
+                            pending_tasks[download_hash] = value
+        # 兼容dict格式（万一将来改变）
+        elif isinstance(all_data, dict):
+            for key, value in all_data.items():
+                if key.startswith(self._task_key_prefix):
+                    download_hash = key[len(self._task_key_prefix):]
+                    if isinstance(value, dict) and value.get('status') == 'pending':
+                        pending_tasks[download_hash] = value
         
         return pending_tasks
     
