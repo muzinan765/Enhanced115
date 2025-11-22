@@ -190,10 +190,10 @@ class Enhanced115(_PluginBase):
         
         logger.info(f"【Enhanced115】已启动{self._upload_threads}个上传工作线程")
 
-    @eventmanager.register(EventType.DownloadComplete)
-    def on_download_complete(self, event: Event):
+    @eventmanager.register(EventType.DownloadAdded)
+    def on_download_added(self, event: Event):
         """
-        监听下载完成事件 → 创建任务
+        监听下载添加事件 → 创建任务
         完全复制my_115_app的find_new_tasks逻辑
         """
         if not self._enabled:
@@ -201,17 +201,25 @@ class Enhanced115(_PluginBase):
         
         try:
             event_data = event.event_data
-            download_history = event_data.get('download_history')
+            download_hash = event_data.get('hash')
             
-            if not download_history:
+            if not download_hash:
                 return
-            
-            download_hash = download_history.download_hash
             
             # 检查是否已处理
             existing_task = self._task_manager.get_task(download_hash)
             if existing_task:
                 logger.debug(f"【Enhanced115】任务已存在，跳过：{download_hash}")
+                return
+            
+            # 从downloadhistory表查询完整信息
+            from app.db.downloadhistory_oper import DownloadHistoryOper
+            
+            download_oper = DownloadHistoryOper()
+            download_history = download_oper.get_by_hash(download_hash)
+            
+            if not download_history:
+                logger.debug(f"【Enhanced115】未找到下载记录：{download_hash}")
                 return
             
             # 查询message表获取文本（用于判断"完结"）
@@ -241,7 +249,7 @@ class Enhanced115(_PluginBase):
             self._stats['total_tasks'] += 1
             
         except Exception as e:
-            logger.error(f"【Enhanced115】处理DownloadComplete事件失败：{e}")
+            logger.error(f"【Enhanced115】处理DownloadAdded事件失败：{e}")
 
     @eventmanager.register(EventType.TransferComplete)
     def on_transfer_complete(self, event: Event):
