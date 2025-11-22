@@ -109,22 +109,27 @@ class TaskAnalyzer:
         用于判断"完结"等关键字
         """
         try:
-            from app.db.models.message import Message
-            from app.db import db
-            
             torrent_name = download_history.torrent_name
             if not torrent_name:
                 return ""
             
-            # 直接查询message表
-            # 查找mtype='资源下载'且text包含torrent_name的消息
-            messages = db.query(Message).filter(
-                Message.mtype == '资源下载',
-                Message.text.like(f'%{torrent_name}%')
-            ).order_by(Message.reg_time.desc()).limit(1).all()
+            # 使用原始SQL查询（最可靠的方式）
+            from app.db import SessionFactory
             
-            if messages:
-                return messages[0].text or ''
+            with SessionFactory() as session:
+                # 直接SQL查询
+                sql = """
+                    SELECT text FROM message 
+                    WHERE mtype = '资源下载' 
+                      AND text LIKE :pattern 
+                    ORDER BY reg_time DESC 
+                    LIMIT 1
+                """
+                result = session.execute(sql, {'pattern': f'%{torrent_name}%'})
+                row = result.fetchone()
+                
+                if row:
+                    return row[0] or ''
             
             return ""
             
