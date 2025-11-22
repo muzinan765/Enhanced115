@@ -1,10 +1,4 @@
-# Python
 __pycache__/
-*.py[cod]
 *.pyc
-
-# Logs
 *.log
-
-# OS
 .DS_Store
