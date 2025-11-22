@@ -458,28 +458,37 @@ class Enhanced115(_PluginBase):
             
             for download_hash, task_info in pending_tasks.items():
                 try:
-                    # 查询数据库真实完成数量（不用内存count）
-                    actual_count = self._count_completed_files(download_hash)
+                    # 查询数据库真实完成数量和详情
+                    actual_count, file_details = self._get_task_progress_detail(download_hash)
                     expected_count = task_info.get('expected_count', 0)
-                    
-                    logger.debug(
-                        f"【Enhanced115】检查任务：{task_info.get('media_title')}，"
-                        f"实际完成={actual_count}，预期={expected_count}"
-                    )
+                    share_mode = task_info.get('share_mode', 'unknown')
+                    media_title = task_info.get('media_title', '未知')
+                    season = task_info.get('season', '')
+                    season_str = f" S{season:02d}" if season else ""
                     
                     # 判断是否完成
                     if actual_count >= expected_count:
                         logger.info(
-                            f"【Enhanced115】任务已完成（定时发现）：{task_info.get('media_title')}，"
-                            f"开始分享（模式={task_info.get('share_mode')}）"
+                            f"【Enhanced115】定时检查发现完成任务 | "
+                            f"{media_title}{season_str} | "
+                            f"模式={share_mode} | "
+                            f"已完成{actual_count}/{expected_count}集 | "
+                            f"准备分享"
                         )
                         
                         # 触发分享
                         self._trigger_share(download_hash, task_info)
                     else:
+                        # 显示已完成的集数列表
+                        completed_list = ", ".join(file_details['completed_episodes']) if file_details['completed_episodes'] else "无"
+                        
                         logger.debug(
-                            f"【Enhanced115】任务未完成：{task_info.get('media_title')}，"
-                            f"还需{expected_count - actual_count}个文件"
+                            f"【Enhanced115】定时检查 | "
+                            f"{media_title}{season_str} | "
+                            f"模式={share_mode} | "
+                            f"进度={actual_count}/{expected_count} | "
+                            f"已完成集数=[{completed_list}] | "
+                            f"还需{expected_count - actual_count}集"
                         )
                         
                 except Exception as e:
@@ -516,6 +525,42 @@ class Enhanced115(_PluginBase):
         except Exception as e:
             logger.error(f"【Enhanced115】统计完成文件数失败：{e}")
             return 0
+    
+    def _get_task_progress_detail(self, download_hash: str) -> tuple:
+        """
+        获取任务进度详情（包括已完成的集数列表）
+        
+        :param download_hash: 下载hash
+        :return: (完成数量, 详情字典)
+        """
+        try:
+            from app.db.transferhistory_oper import TransferHistoryOper
+            import re
+            
+            transferhis = TransferHistoryOper()
+            records = transferhis.list_by_hash(download_hash)
+            
+            count = 0
+            completed_episodes = []
+            
+            for record in records:
+                if record.dest_storage == 'u115' and record.status:
+                    count += 1
+                    
+                    # 尝试从episodes字段提取集数
+                    if record.episodes:
+                        # 提取集数（如"E08"、"08"等）
+                        ep_match = re.search(r'E?(\d+)', record.episodes, re.IGNORECASE)
+                        if ep_match:
+                            completed_episodes.append(f"E{int(ep_match.group(1)):02d}")
+            
+            return count, {
+                'completed_episodes': completed_episodes
+            }
+            
+        except Exception as e:
+            logger.error(f"【Enhanced115】获取任务详情失败：{e}")
+            return 0, {'completed_episodes': []}
 
     def _trigger_share(self, download_hash: str, task_info: dict):
         """
