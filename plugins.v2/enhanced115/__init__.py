@@ -77,6 +77,9 @@ class Enhanced115(_PluginBase):
         self._movie_root_cid = None
         self._tv_root_cid = None
         
+        # 删除配置
+        self._delete_after_upload = False  # 上传后删除本地文件
+        
         # 处理器
         self._p115_client = None
         self._uploader = None
@@ -127,6 +130,9 @@ class Enhanced115(_PluginBase):
         self._telegram_enabled = config.get("telegram_enabled", False)
         self._telegram_bot_token = config.get("telegram_bot_token", "")
         self._telegram_chat_id = config.get("telegram_chat_id", "")
+        
+        # 删除配置
+        self._delete_after_upload = config.get("delete_after_upload", False)
         
         # 停止旧服务
         self.stop_service()
@@ -383,6 +389,15 @@ class Enhanced115(_PluginBase):
         if db_updated:
             self._stats['uploaded'] += 1
             logger.info(f"【Enhanced115】上传并更新数据库成功：{filename}")
+            
+            # 上传成功后删除本地文件（如果配置开启）
+            if self._delete_after_upload:
+                try:
+                    if local_path.exists():
+                        local_path.unlink()
+                        logger.info(f"【Enhanced115】已删除本地文件：{filename}")
+                except Exception as del_err:
+                    logger.warning(f"【Enhanced115】删除本地文件失败：{filename}，错误：{del_err}")
         else:
             logger.warning(f"【Enhanced115】数据库更新失败：{filename}")
             return
@@ -862,6 +877,22 @@ class Enhanced115(_PluginBase):
                             }
                         ]
                     },
+                    # 删除配置
+                    {
+                        'component': 'VRow',
+                        'content': [{
+                            'component': 'VCol',
+                            'props': {'cols': 12, 'md': 6},
+                            'content': [{
+                                'component': 'VSwitch',
+                                'props': {
+                                    'model': 'delete_after_upload',
+                                    'label': '上传后删除本地文件',
+                                    'hint': '开启后会删除/media中已上传的文件，节省空间'
+                                }
+                            }]
+                        }]
+                    },
                     # Telegram
                     {
                         'component': 'VRow',
@@ -920,6 +951,7 @@ class Enhanced115(_PluginBase):
             'access_user_ids': '',
             'movie_root_cid': '',
             'tv_root_cid': '',
+            'delete_after_upload': False,
             'telegram_enabled': False,
             'telegram_bot_token': '',
             'telegram_chat_id': ''
