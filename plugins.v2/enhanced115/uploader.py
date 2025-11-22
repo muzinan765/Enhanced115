@@ -64,6 +64,7 @@ class Upload115Handler:
                     'pickcode': data.get('pickcode', ''),
                     'path': remote_path,
                     'name': filename,
+                    'size': local_path.stat().st_size,  # 添加size
                     'type': 'file'
                 }
                 logger.info(f"【Enhanced115】秒传file_info：{file_info}")
@@ -92,10 +93,11 @@ class Upload115Handler:
                 data = result.get('data', {})
                 file_info = {
                     'storage': 'u115',
-                    'fileid': str(data.get('file_id', '')),
+                    'fileid': str(data.get('file_id', '')),  # 已验证：file_id字段是正确的
                     'pickcode': data.get('pickcode', ''),
                     'path': remote_path,
                     'name': filename,
+                    'size': local_path.stat().st_size,
                     'type': 'file'
                 }
                 logger.info(f"【Enhanced115】上传file_info：{file_info}")

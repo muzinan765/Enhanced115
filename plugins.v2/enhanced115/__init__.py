@@ -371,7 +371,10 @@ class Enhanced115(_PluginBase):
             return
         
         # 2. 更新数据库（local→u115）
+        # ⚠️ 关键：传入src_path，只更新当前文件的记录
+        src_path = upload_task['fileitem'].path
         db_updated = DatabaseHandler.update_transfer_record(
+            src_path,
             download_hash,
             remote_path,
             file_info
@@ -411,9 +414,16 @@ class Enhanced115(_PluginBase):
                             task_info,
                             share_result
                         )
-            
-            # 7. 移除任务
-            self._task_manager.remove_task(download_hash)
+                    
+                    # 7. 分享成功才移除任务
+                    self._task_manager.remove_task(download_hash)
+                    logger.info(f"【Enhanced115】任务已完成并移除：{task_info['media_title']}")
+                else:
+                    # 分享失败，保留任务，等待下次重试
+                    logger.warning(f"【Enhanced115】分享失败，任务保留：{task_info['media_title']}")
+            else:
+                # 未启用分享，直接移除任务
+                self._task_manager.remove_task(download_hash)
 
     def get_state(self) -> bool:
         """获取插件运行状态"""

@@ -10,10 +10,12 @@ class DatabaseHandler:
     """数据库操作处理类"""
     
     @staticmethod
-    def update_transfer_record(download_hash: str, remote_path: str, file_info: dict) -> bool:
+    def update_transfer_record(src_path: str, download_hash: str, remote_path: str, file_info: dict) -> bool:
         """
         更新整理记录：从local改为u115
+        ⚠️ 关键：只更新当前文件的记录，不是所有记录！
         
+        :param src_path: 源文件路径（用于匹配具体哪条记录）
         :param download_hash: 下载hash
         :param remote_path: 115远程路径
         :param file_info: 115文件信息
@@ -28,35 +30,33 @@ class DatabaseHandler:
             from app.db import SessionFactory
             
             transferhis = TransferHistoryOper()
-            records = transferhis.list_by_hash(download_hash)
             
-            if not records:
-                logger.warning(f"【Enhanced115】未找到转移记录：{download_hash}")
+            # ⚠️ 关键修复：通过src路径找到具体的那条记录
+            # 一个download_hash可能有多个文件（剧集E01, E02...）
+            # 必须只更新当前文件对应的记录！
+            record = transferhis.get_by_src(src_path, storage='local')
+            
+            if not record:
+                logger.warning(f"【Enhanced115】未找到转移记录：{src_path}")
                 return False
             
-            # 更新所有相关记录（可能是多集）
-            updated_count = 0
             with SessionFactory() as session:
-                for record in records:
-                    try:
-                        # 使用ORM update方法
-                        record.update(session, {
-                            'dest_storage': 'u115',
-                            'dest': remote_path,
-                            'dest_fileitem': file_info
-                        })
-                        updated_count += 1
-                    except Exception as e:
-                        logger.error(f"【Enhanced115】更新记录失败：{record.id}，错误：{e}")
-                
-                # 提交事务
-                session.commit()
-            
-            if updated_count > 0:
-                logger.info(f"【Enhanced115】数据库已更新：{download_hash}，{updated_count}条记录")
-                return True
-            else:
-                return False
+                try:
+                    # 只更新这一条记录
+                    record.update(session, {
+                        'dest_storage': 'u115',
+                        'dest': remote_path,
+                        'dest_fileitem': file_info
+                    })
+                    session.commit()
+                    
+                    logger.info(f"【Enhanced115】数据库已更新：{record.id}，文件：{file_info.get('name')}")
+                    return True
+                    
+                except Exception as e:
+                    logger.error(f"【Enhanced115】更新记录失败：{record.id}，错误：{e}")
+                    session.rollback()
+                    return False
             
         except Exception as e:
             logger.error(f"【Enhanced115】数据库更新失败：{e}")
