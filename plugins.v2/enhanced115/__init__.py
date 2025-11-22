@@ -15,6 +15,7 @@ Enhanced115 - 115网盘助手（完全集成my_115_app）
 """
 import queue
 import threading
+from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional, List, Dict, Any, Tuple
 
