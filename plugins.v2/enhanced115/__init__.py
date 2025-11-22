@@ -464,7 +464,15 @@ class Enhanced115(_PluginBase):
                     share_mode = task_info.get('share_mode', 'unknown')
                     media_title = task_info.get('media_title', '未知')
                     season = task_info.get('season', '')
-                    season_str = f" S{season:02d}" if season else ""
+                    # season可能是字符串，需要转换
+                    if season:
+                        try:
+                            season_num = int(season)
+                            season_str = f" S{season_num:02d}"
+                        except (ValueError, TypeError):
+                            season_str = f" {season}"
+                    else:
+                        season_str = ""
                     
                     # 判断是否完成
                     if actual_count >= expected_count:
