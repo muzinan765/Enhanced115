@@ -1,5 +1,6 @@
 """
 115分享处理模块
+完全复制my_115_app的分享逻辑
 """
 from pathlib import Path
 from typing import Optional, Dict, Any
@@ -17,55 +18,77 @@ class Share115Handler:
         :param config: 分享配置
         """
         self.client = client
-        self.share_mode = config.get('share_mode', 'folder')
         self.share_duration = config.get('share_duration', -1)
         self.share_password = config.get('share_password', '')
         self.movie_root_cid = config.get('movie_root_cid', '')
         self.tv_root_cid = config.get('tv_root_cid', '')
     
-    def create_share(self, task: dict, file_info: dict) -> Optional[dict]:
+    def create_share(self, task_info: dict, download_hash: str, mediainfo=None) -> Optional[dict]:
         """
-        创建115分享
+        创建115分享（根据task_info中的share_mode自动选择）
         
-        :param task: 上传任务信息
-        :param file_info: 115文件信息
-        :return: 分享结果 {share_url, share_code, receive_code}
+        :param task_info: 任务信息（包含share_mode）
+        :param download_hash: 下载hash
+        :param mediainfo: 媒体信息（可选）
+        :return: 分享结果
         """
         try:
-            if self.share_mode == 'folder':
-                return self._share_folder(task, file_info)
+            share_mode = task_info.get('share_mode')
+            
+            if share_mode == 'folder':
+                return self._share_folder(task_info, download_hash)
+            elif share_mode == 'file':
+                return self._share_files(download_hash, task_info)
             else:
-                return self._share_files(task, file_info)
+                logger.error(f"【Enhanced115】未知分享模式：{share_mode}")
+                return None
+                
         except Exception as e:
             logger.error(f"【Enhanced115】创建分享失败：{e}")
             return None
     
-    def _share_folder(self, task: dict, file_info: dict) -> Optional[dict]:
-        """文件夹分享"""
+    def _share_folder(self, task_info: dict, download_hash: str) -> Optional[dict]:
+        """
+        文件夹分享
+        完全复制my_115_app的_handle_folder_share逻辑
+        """
         try:
-            mediainfo = task['mediainfo']
-            remote_path = task['remote_path']
+            from app.db.transferhistory_oper import TransferHistoryOper
             
-            # 解析文件夹名
-            folder_name = Path(remote_path).parent.name
+            # 1. 查询一个文件的路径（任意一个）
+            transferhis = TransferHistoryOper()
+            records = transferhis.list_by_hash(download_hash)
             
-            # 确定根目录CID
-            if mediainfo.type.value == '电影':
-                root_cid = self.movie_root_cid
-            else:
-                root_cid = self.tv_root_cid
+            dest_path = None
+            for record in records:
+                if record.dest_storage == 'u115' and record.dest:
+                    dest_path = record.dest
+                    break
             
-            if not root_cid:
-                logger.warning("【Enhanced115】未配置根目录CID，跳过分享")
+            if not dest_path:
+                logger.error("【Enhanced115】未找到115文件路径")
                 return None
             
-            # 查找文件夹ID
+            # 2. 从路径提取文件夹名
+            # 例如：/Emby/电影/流浪地球2 (2023)/xxx.mkv → 流浪地球2 (2023)
+            path_obj = Path(dest_path)
+            folder_name = path_obj.parent.name
+            
+            # 3. 确定根目录CID
+            is_movie = task_info.get('is_movie', False)
+            root_cid = self.movie_root_cid if is_movie else self.tv_root_cid
+            
+            if not root_cid:
+                logger.warning("【Enhanced115】未配置根目录CID")
+                return None
+            
+            # 4. 在115中查找文件夹ID
             folder_id = self._find_folder_id(folder_name, root_cid)
             if not folder_id:
                 logger.error(f"【Enhanced115】未找到115文件夹：{folder_name}")
                 return None
             
-            # 创建分享
+            # 5. 创建分享
             share_result = self.client.share_send(
                 file_id=folder_id,
                 is_asc=1,
@@ -79,32 +102,32 @@ class Share115Handler:
             share_code = share_result.get('share_code')
             share_url = share_result.get('share_url')
             
-            # 修改分享设置
-            if share_code and (self.share_password or self.share_duration != -1):
+            # 6. 修改分享设置
+            if share_code:
                 self._update_share(share_code)
             
-            logger.info(f"【Enhanced115】分享已创建：{folder_name}")
+            logger.info(f"【Enhanced115】文件夹分享已创建：{folder_name}")
             
             return {
                 'share_url': share_url,
                 'share_code': share_code,
-                'receive_code': self.share_password
+                'receive_code': self.share_password,
+                'media_title': task_info.get('media_title', '')
             }
             
         except Exception as e:
             logger.error(f"【Enhanced115】文件夹分享失败：{e}")
             return None
     
-    def _share_files(self, task: dict, file_info: dict) -> Optional[dict]:
-        """文件打包分享"""
+    def _share_files(self, download_hash: str, task_info: dict) -> Optional[dict]:
+        """
+        文件打包分享
+        完全复制my_115_app的_handle_file_share逻辑
+        """
         try:
-            download_hash = task.get('download_hash')
-            if not download_hash:
-                return None
-            
-            # 查询所有文件ID
             from app.db.transferhistory_oper import TransferHistoryOper
             
+            # 1. 查询所有文件的fileid
             transferhis = TransferHistoryOper()
             records = transferhis.list_by_hash(download_hash)
             
@@ -116,10 +139,10 @@ class Share115Handler:
                         file_ids.append(fileid)
             
             if not file_ids:
-                logger.warning("【Enhanced115】未找到115文件ID，无法打包分享")
+                logger.error("【Enhanced115】未找到115文件ID")
                 return None
             
-            # 创建打包分享
+            # 2. 创建打包分享
             share_result = self.client.share_send(file_ids)
             
             if not share_result or not share_result.get('state'):
@@ -127,16 +150,17 @@ class Share115Handler:
             
             share_code = share_result.get('share_code')
             
-            # 修改分享设置
+            # 3. 修改分享设置
             if share_code:
                 self._update_share(share_code)
             
-            logger.info("【Enhanced115】文件打包分享已创建")
+            logger.info(f"【Enhanced115】文件打包分享已创建：{len(file_ids)}个文件")
             
             return {
                 'share_url': share_result.get('share_url'),
                 'share_code': share_code,
-                'receive_code': self.share_password
+                'receive_code': self.share_password,
+                'media_title': task_info.get('media_title', '')
             }
             
         except Exception as e:
@@ -144,21 +168,30 @@ class Share115Handler:
             return None
     
     def _find_folder_id(self, folder_name: str, root_cid: str) -> Optional[str]:
-        """在115根目录下查找文件夹ID"""
+        """
+        在115根目录下查找文件夹ID
+        完全复制my_115_app的_get_folder_id_from_path逻辑
+        """
         try:
             from p115client.tool import iter_fs_files_serialized, normalize_attr
             
             login_app = self.client.login_app() or 'ios'
+            
+            logger.info(f"【Enhanced115】在根目录{root_cid}下查找：{folder_name}")
             
             for item_resp in iter_fs_files_serialized(self.client, root_cid, app=login_app):
                 for item_raw in item_resp.get('data', []):
                     try:
                         item = normalize_attr(item_raw)
                         if item['is_dir'] and item['name'] == folder_name:
-                            return str(item['id'])
-                    except:
+                            folder_id = str(item['id'])
+                            logger.info(f"【Enhanced115】找到文件夹：{folder_name} (ID={folder_id})")
+                            return folder_id
+                    except Exception as e:
+                        logger.debug(f"【Enhanced115】标准化item失败：{e}")
                         continue
             
+            logger.warning(f"【Enhanced115】未找到文件夹：{folder_name}")
             return None
             
         except Exception as e:
@@ -177,4 +210,3 @@ class Share115Handler:
             logger.debug("【Enhanced115】分享设置已更新")
         except Exception as e:
             logger.warning(f"【Enhanced115】更新分享设置失败：{e}")
-

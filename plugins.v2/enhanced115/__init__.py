@@ -1,16 +1,21 @@
 """
-Enhanced115 - 115网盘上传助手（基于硬链接）
+Enhanced115 - 115网盘助手（完全集成my_115_app）
 
-工作原理：
-1. MoviePilot使用硬链接整理（本地→本地，瞬间完成）
-2. 插件监听TransferComplete事件
-3. 多线程异步上传到115网盘
-4. 更新数据库记录（local→u115）
-5. 创建115分享（集成my_115_app逻辑）
-6. Telegram通知
+完整流程：
+1. 监听DownloadComplete（下载完成）→ 智能判断并创建任务
+2. 监听TransferComplete（整理完成）→ 上传+统计+判断是否完成
+3. 所有文件完成后 → 自动分享
+4. Telegram通知
+
+智能判断逻辑（完全复制my_115_app）：
+- 电影：固定folder模式
+- 电视剧：分析episodes、种子描述、种子名称、消息记录
+  三个条件（全集 AND 多集 AND 从第1集开始）→ folder
+  否则 → file（单集、补集等）
 """
 import queue
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from typing import Optional, List, Dict, Any, Tuple
 
 from app.core.event import eventmanager, Event
@@ -23,13 +28,15 @@ from .uploader import Upload115Handler
 from .sharer import Share115Handler
 from .database import DatabaseHandler
 from .telegram_notifier import TelegramNotifier
+from .task_analyzer import TaskAnalyzer
+from .task_manager import TaskManager
 from .utils import map_local_to_remote, parse_path_mappings
 
 
 class Enhanced115(_PluginBase):
     # 插件基本信息
     plugin_name = "Enhanced115网盘助手"
-    plugin_desc = "硬链接+多线程上传115，集成分享功能"
+    plugin_desc = "硬链接+多线程上传+智能分享（完全集成my_115_app逻辑）"
     plugin_icon = "https://raw.githubusercontent.com/jxxghp/MoviePilot-Plugins/main/icons/cloud.png"
     plugin_version = "2.0.0"
     plugin_author = "muzinan765"
@@ -49,17 +56,24 @@ class Enhanced115(_PluginBase):
         
         # 分享配置
         self._share_enabled = False
-        self._share_config = {}
+        self._share_duration = -1
+        self._share_password = None
         
         # Telegram配置
         self._telegram_enabled = False
-        self._telegram_config = {}
+        self._telegram_bot_token = None
+        self._telegram_chat_id = None
+        
+        # 115根目录配置
+        self._movie_root_cid = None
+        self._tv_root_cid = None
         
         # 处理器
         self._p115_client = None
         self._uploader = None
         self._sharer = None
         self._telegram = None
+        self._task_manager = None
         
         # 上传队列
         self._upload_queue = queue.Queue()
@@ -68,11 +82,11 @@ class Enhanced115(_PluginBase):
         
         # 统计
         self._stats = {
-            'total': 0,
-            'success': 0,
+            'total_tasks': 0,
+            'uploaded': 0,
+            'shared': 0,
             'failed': 0,
-            'in_progress': 0,
-            'shared': 0
+            'queue_size': 0
         }
 
     def init_plugin(self, config: dict = None):
@@ -84,26 +98,19 @@ class Enhanced115(_PluginBase):
         self._enabled = config.get("enabled", False)
         self._p115_cookies = config.get("p115_cookies", "")
         self._upload_threads = int(config.get("upload_threads", 3))
-        
-        # 路径映射
         self._path_mappings = parse_path_mappings(config.get("path_mappings", ""))
         
         # 分享配置
         self._share_enabled = config.get("share_enabled", False)
-        self._share_config = {
-            'share_mode': config.get("share_mode", "folder"),
-            'share_duration': int(config.get("share_duration", -1)),
-            'share_password': config.get("share_password", ""),
-            'movie_root_cid': config.get("movie_root_cid", ""),
-            'tv_root_cid': config.get("tv_root_cid", "")
-        }
+        self._share_duration = int(config.get("share_duration", -1))
+        self._share_password = config.get("share_password", "")
+        self._movie_root_cid = config.get("movie_root_cid", "")
+        self._tv_root_cid = config.get("tv_root_cid", "")
         
         # Telegram配置
         self._telegram_enabled = config.get("telegram_enabled", False)
-        self._telegram_config = {
-            'bot_token': config.get("telegram_bot_token", ""),
-            'chat_id': config.get("telegram_chat_id", "")
-        }
+        self._telegram_bot_token = config.get("telegram_bot_token", "")
+        self._telegram_chat_id = config.get("telegram_chat_id", "")
         
         # 停止旧服务
         self.stop_service()
@@ -122,20 +129,27 @@ class Enhanced115(_PluginBase):
             
             # 初始化处理器
             self._uploader = Upload115Handler(self._p115_client)
+            self._task_manager = TaskManager(self)
             
             if self._share_enabled:
-                self._sharer = Share115Handler(self._p115_client, self._share_config)
+                share_config = {
+                    'share_duration': self._share_duration,
+                    'share_password': self._share_password,
+                    'movie_root_cid': self._movie_root_cid,
+                    'tv_root_cid': self._tv_root_cid
+                }
+                self._sharer = Share115Handler(self._p115_client, share_config)
             
             if self._telegram_enabled:
                 self._telegram = TelegramNotifier(
-                    self._telegram_config['bot_token'],
-                    self._telegram_config['chat_id']
+                    self._telegram_bot_token,
+                    self._telegram_chat_id
                 )
             
             # 启动上传队列
             self._start_upload_workers()
             
-            logger.info("【Enhanced115】插件初始化完成")
+            logger.info("【Enhanced115】插件初始化完成（完全集成my_115_app逻辑）")
             
         except Exception as e:
             logger.error(f"【Enhanced115】插件初始化失败：{e}")
@@ -150,7 +164,6 @@ class Enhanced115(_PluginBase):
                 check_for_relogin=True
             )
             
-            # 验证
             user_id = self._p115_client.user_id
             user_key = self._p115_client.user_key
             
@@ -160,30 +173,81 @@ class Enhanced115(_PluginBase):
                 raise Exception("无法获取用户ID或Key")
                 
         except ImportError:
-            raise Exception("p115client库未安装，请执行: pip install p115client")
+            raise Exception("p115client库未安装")
         except Exception as e:
             raise Exception(f"115客户端初始化失败：{str(e)}")
 
     def _start_upload_workers(self):
         """启动上传工作线程"""
-        from concurrent.futures import ThreadPoolExecutor
-        
         self._stop_event.clear()
         self._upload_executor = ThreadPoolExecutor(
             max_workers=self._upload_threads,
             thread_name_prefix="Enhanced115-Upload"
         )
         
-        # 启动工作线程
         for i in range(self._upload_threads):
             self._upload_executor.submit(self._upload_worker)
         
         logger.info(f"【Enhanced115】已启动{self._upload_threads}个上传工作线程")
 
+    @eventmanager.register(EventType.DownloadComplete)
+    def on_download_complete(self, event: Event):
+        """
+        监听下载完成事件 → 创建任务
+        完全复制my_115_app的find_new_tasks逻辑
+        """
+        if not self._enabled:
+            return
+        
+        try:
+            event_data = event.event_data
+            download_history = event_data.get('download_history')
+            
+            if not download_history:
+                return
+            
+            download_hash = download_history.download_hash
+            
+            # 检查是否已处理
+            existing_task = self._task_manager.get_task(download_hash)
+            if existing_task:
+                logger.debug(f"【Enhanced115】任务已存在，跳过：{download_hash}")
+                return
+            
+            # 查询message表获取文本（用于判断"完结"）
+            message_text = TaskAnalyzer.query_message_text(download_history)
+            
+            # 智能判断分享模式（核心逻辑）
+            share_mode, expected_count = TaskAnalyzer.analyze_share_mode(
+                download_history,
+                message_text
+            )
+            
+            if not share_mode or expected_count == 0:
+                logger.debug("【Enhanced115】无法判断分享模式，跳过")
+                return
+            
+            # 创建任务
+            self._task_manager.create_task(
+                download_hash=download_hash,
+                share_mode=share_mode,
+                expected_count=expected_count,
+                tmdb_id=download_history.tmdbid or 0,
+                media_title=f"{download_history.title} ({download_history.year})",
+                is_movie=(download_history.type == '电影'),
+                season=download_history.seasons
+            )
+            
+            self._stats['total_tasks'] += 1
+            
+        except Exception as e:
+            logger.error(f"【Enhanced115】处理DownloadComplete事件失败：{e}")
+
     @eventmanager.register(EventType.TransferComplete)
     def on_transfer_complete(self, event: Event):
         """
-        监听整理完成事件
+        监听整理完成事件 → 上传并检查是否所有文件完成
+        完全复制my_115_app的check_completed_tasks逻辑
         """
         if not self._enabled or not self._p115_client:
             return
@@ -191,12 +255,19 @@ class Enhanced115(_PluginBase):
         try:
             event_data = event.event_data
             transferinfo = event_data.get('transferinfo')
+            download_hash = event_data.get('download_hash')
             
-            # 检查是否是本地存储（硬链接后的状态）
             if not transferinfo or not transferinfo.target_item:
                 return
             
             if transferinfo.target_item.storage != 'local':
+                return
+            
+            # 检查是否有对应的任务
+            task = self._task_manager.get_task(download_hash)
+            if not task:
+                # 没有任务记录，可能不是需要分享的下载
+                logger.debug(f"【Enhanced115】无对应任务，跳过：{download_hash}")
                 return
             
             # 映射路径
@@ -204,37 +275,36 @@ class Enhanced115(_PluginBase):
             remote_path = map_local_to_remote(local_path, self._path_mappings)
             
             if not remote_path:
-                logger.debug(f"【Enhanced115】路径不在映射配置中：{local_path}")
+                logger.warning(f"【Enhanced115】路径映射失败：{local_path}")
                 return
             
             # 构建上传任务
-            from pathlib import Path
-            
             upload_task = {
                 'local_path': Path(local_path),
                 'remote_path': remote_path,
-                'download_hash': event_data.get('download_hash'),
+                'download_hash': download_hash,
+                'task_info': task,
                 'fileitem': event_data.get('fileitem'),
                 'meta': event_data.get('meta'),
                 'mediainfo': event_data.get('mediainfo'),
-                'transferinfo': transferinfo,
-                'downloader': event_data.get('downloader'),
             }
             
-            # 加入队列
+            # 加入上传队列
             self._upload_queue.put(upload_task)
-            self._stats['total'] += 1
+            self._stats['queue_size'] = self._upload_queue.qsize()
             
             logger.info(
-                f"【Enhanced115】已加入上传队列：{transferinfo.target_item.name}，"
-                f"队列长度：{self._upload_queue.qsize()}"
+                f"【Enhanced115】加入上传队列：{transferinfo.target_item.name}，"
+                f"任务：{task['media_title']} ({task['actual_count']}/{task['expected_count']})"
             )
             
         except Exception as e:
-            logger.error(f"【Enhanced115】处理事件失败：{e}")
+            logger.error(f"【Enhanced115】处理TransferComplete事件失败：{e}")
 
     def _upload_worker(self):
         """上传工作线程"""
+        from pathlib import Path
+        
         while not self._stop_event.is_set():
             try:
                 task = self._upload_queue.get(timeout=1)
@@ -244,54 +314,75 @@ class Enhanced115(_PluginBase):
             if not task:
                 continue
             
-            self._stats['in_progress'] += 1
-            
             try:
                 self._process_upload_task(task)
             except Exception as e:
                 logger.error(f"【Enhanced115】任务处理异常：{e}")
                 self._stats['failed'] += 1
             finally:
-                self._stats['in_progress'] -= 1
                 self._upload_queue.task_done()
+                self._stats['queue_size'] = self._upload_queue.qsize()
 
-    def _process_upload_task(self, task: dict):
+    def _process_upload_task(self, upload_task: dict):
         """处理上传任务"""
-        local_path = task['local_path']
-        remote_path = task['remote_path']
+        local_path = upload_task['local_path']
+        remote_path = upload_task['remote_path']
+        download_hash = upload_task['download_hash']
+        task_info = upload_task['task_info']
         filename = local_path.name
         
         # 1. 上传到115
         success, file_info = self._uploader.upload_file(local_path, remote_path, filename)
         
         if not success:
-            self._stats['failed'] += 1
             logger.error(f"【Enhanced115】上传失败：{filename}")
+            self._stats['failed'] += 1
             return
         
-        # 2. 更新数据库
+        # 2. 更新数据库（local→u115）
         db_updated = DatabaseHandler.update_transfer_record(
-            task['download_hash'],
+            download_hash,
             remote_path,
             file_info
         )
         
-        if not db_updated:
+        if db_updated:
+            self._stats['uploaded'] += 1
+            logger.info(f"【Enhanced115】上传并更新数据库成功：{filename}")
+        else:
             logger.warning(f"【Enhanced115】数据库更新失败：{filename}")
-            # 即使数据库更新失败，文件已在115，继续后续流程
+            return
         
-        self._stats['success'] += 1
-        logger.info(f"【Enhanced115】处理完成：{filename}")
+        # 3. 增加actual_count
+        self._task_manager.increment_actual_count(download_hash)
         
-        # 3. 创建分享（如果启用）
-        if self._share_enabled and self._sharer:
-            share_result = self._sharer.create_share(task, file_info)
-            if share_result:
-                self._stats['shared'] += 1
+        # 4. 检查任务是否完成
+        if self._task_manager.is_task_complete(download_hash):
+            logger.info(
+                f"【Enhanced115】任务完成：{task_info['media_title']}，"
+                f"开始分享（模式={task_info['share_mode']}）"
+            )
+            
+            # 5. 创建分享
+            if self._share_enabled and self._sharer:
+                share_result = self._sharer.create_share(
+                    task_info,
+                    download_hash,
+                    upload_task.get('mediainfo')
+                )
                 
-                # 4. Telegram通知
-                if self._telegram_enabled and self._telegram:
-                    self._telegram.send_share_notification(task, share_result)
+                if share_result:
+                    self._stats['shared'] += 1
+                    
+                    # 6. Telegram通知
+                    if self._telegram_enabled and self._telegram:
+                        self._telegram.send_share_notification(
+                            task_info,
+                            share_result
+                        )
+            
+            # 7. 移除任务
+            self._task_manager.remove_task(download_hash)
 
     def get_state(self) -> bool:
         """获取插件运行状态"""
@@ -314,12 +405,12 @@ class Enhanced115(_PluginBase):
                                 'props': {
                                     'type': 'info',
                                     'variant': 'tonal',
-                                    'text': '⚠️ 重要：MoviePilot必须配置为"硬链接"整理方式！\\n工作流程：硬链接整理(瞬间) → 插件异步上传115 → 更新数据库 → 创建分享'
+                                    'text': '完全集成my_115_app逻辑！\\n1. 智能判断分享模式（整季/单集/补集）\\n2. 自动统计完成数量\\n3. 所有文件完成后自动分享\\n\\n⚠️ MoviePilot必须配置为"硬链接"整理'
                                 }
                             }]
                         }]
                     },
-                    # 启用开关
+                    # 启用
                     {
                         'component': 'VRow',
                         'content': [{
@@ -329,8 +420,7 @@ class Enhanced115(_PluginBase):
                                 'component': 'VSwitch',
                                 'props': {
                                     'model': 'enabled',
-                                    'label': '启用插件',
-                                    'hint': '总开关'
+                                    'label': '启用插件'
                                 }
                             }]
                         }]
@@ -347,7 +437,7 @@ class Enhanced115(_PluginBase):
                                     'model': 'p115_cookies',
                                     'label': '115网盘 Cookies',
                                     'rows': 2,
-                                    'hint': '登录115.com，F12→Network→复制Cookie'
+                                    'hint': 'F12→Network→复制Cookie'
                                 }
                             }]
                         }]
@@ -363,8 +453,7 @@ class Enhanced115(_PluginBase):
                                 'props': {
                                     'model': 'upload_threads',
                                     'label': '上传线程数',
-                                    'type': 'number',
-                                    'hint': '建议3-5个线程'
+                                    'type': 'number'
                                 }
                             }]
                         }]
@@ -379,7 +468,7 @@ class Enhanced115(_PluginBase):
                                 'component': 'VTextarea',
                                 'props': {
                                     'model': 'path_mappings',
-                                    'label': '路径映射（JSON）',
+                                    'label': '路径映射(JSON)',
                                     'rows': 2,
                                     'hint': '[{"local":"/media","remote":"/Emby"}]'
                                 }
@@ -397,24 +486,7 @@ class Enhanced115(_PluginBase):
                                     'component': 'VSwitch',
                                     'props': {
                                         'model': 'share_enabled',
-                                        'label': '启用自动分享',
-                                        'hint': '上传后自动创建115分享'
-                                    }
-                                }]
-                            },
-                            {
-                                'component': 'VCol',
-                                'props': {'cols': 12, 'md': 4},
-                                'content': [{
-                                    'component': 'VSelect',
-                                    'props': {
-                                        'model': 'share_mode',
-                                        'label': '分享模式',
-                                        'items': [
-                                            {'title': '文件夹分享', 'value': 'folder'},
-                                            {'title': '文件打包分享', 'value': 'file'}
-                                        ],
-                                        'hint': 'folder=分享整个目录，file=打包分享文件'
+                                        'label': '启用自动分享'
                                     }
                                 }]
                             },
@@ -430,13 +502,7 @@ class Enhanced115(_PluginBase):
                                         'hint': '-1=永久'
                                     }
                                 }]
-                            }
-                        ]
-                    },
-                    # 分享参数
-                    {
-                        'component': 'VRow',
-                        'content': [
+                            },
                             {
                                 'component': 'VCol',
                                 'props': {'cols': 12, 'md': 4},
@@ -445,37 +511,41 @@ class Enhanced115(_PluginBase):
                                     'props': {
                                         'model': 'share_password',
                                         'label': '提取码',
-                                        'hint': '4位字符，留空=无密码'
-                                    }
-                                }]
-                            },
-                            {
-                                'component': 'VCol',
-                                'props': {'cols': 12, 'md': 4},
-                                'content': [{
-                                    'component': 'VTextField',
-                                    'props': {
-                                        'model': 'movie_root_cid',
-                                        'label': '电影根目录CID',
-                                        'hint': '115中/Emby/电影的CID'
-                                    }
-                                }]
-                            },
-                            {
-                                'component': 'VCol',
-                                'props': {'cols': 12, 'md': 4},
-                                'content': [{
-                                    'component': 'VTextField',
-                                    'props': {
-                                        'model': 'tv_root_cid',
-                                        'label': '电视剧根目录CID',
-                                        'hint': '115中/Emby/电视剧的CID'
+                                        'hint': '4位或留空'
                                     }
                                 }]
                             }
                         ]
                     },
-                    # Telegram配置
+                    # 115根目录
+                    {
+                        'component': 'VRow',
+                        'content': [
+                            {
+                                'component': 'VCol',
+                                'props': {'cols': 12, 'md': 6},
+                                'content': [{
+                                    'component': 'VTextField',
+                                    'props': {
+                                        'model': 'movie_root_cid',
+                                        'label': '电影根目录CID'
+                                    }
+                                }]
+                            },
+                            {
+                                'component': 'VCol',
+                                'props': {'cols': 12, 'md': 6},
+                                'content': [{
+                                    'component': 'VTextField',
+                                    'props': {
+                                        'model': 'tv_root_cid',
+                                        'label': '电视剧根目录CID'
+                                    }
+                                }]
+                            }
+                        ]
+                    },
+                    # Telegram
                     {
                         'component': 'VRow',
                         'content': [
@@ -486,8 +556,7 @@ class Enhanced115(_PluginBase):
                                     'component': 'VSwitch',
                                     'props': {
                                         'model': 'telegram_enabled',
-                                        'label': '启用Telegram通知',
-                                        'hint': '分享完成后发送通知'
+                                        'label': '启用Telegram'
                                     }
                                 }]
                             },
@@ -523,7 +592,6 @@ class Enhanced115(_PluginBase):
             'upload_threads': 3,
             'path_mappings': '[{"local":"/media","remote":"/Emby"}]',
             'share_enabled': False,
-            'share_mode': 'folder',
             'share_duration': -1,
             'share_password': '',
             'movie_root_cid': '',
@@ -535,36 +603,68 @@ class Enhanced115(_PluginBase):
 
     def get_page(self) -> List[dict]:
         """拼装插件详情页面"""
+        # 获取所有待处理任务
+        pending_tasks = self._task_manager.get_all_pending_tasks() if self._task_manager else {}
+        
+        tasks_text = ""
+        for download_hash, task in pending_tasks.items():
+            tasks_text += (
+                f"{task['media_title']}：{task['actual_count']}/{task['expected_count']} "
+                f"[{task['share_mode']}]\\n"
+            )
+        
+        if not tasks_text:
+            tasks_text = "无待处理任务"
+        
         stats_text = (
-            f"总任务：{self._stats['total']}\\n"
-            f"成功：{self._stats['success']}\\n"
-            f"失败：{self._stats['failed']}\\n"
-            f"进行中：{self._stats['in_progress']}\\n"
+            f"总任务：{self._stats['total_tasks']}\\n"
+            f"已上传：{self._stats['uploaded']}\\n"
             f"已分享：{self._stats['shared']}\\n"
-            f"队列：{self._upload_queue.qsize()}"
+            f"失败：{self._stats['failed']}\\n"
+            f"队列：{self._stats['queue_size']}"
         )
         
         return [
             {
                 'component': 'VRow',
-                'content': [{
-                    'component': 'VCol',
-                    'props': {'cols': 12},
-                    'content': [{
-                        'component': 'VCard',
-                        'props': {'variant': 'tonal'},
-                        'content': [
-                            {
-                                'component': 'VCardTitle',
-                                'props': {'text': '上传统计'}
-                            },
-                            {
-                                'component': 'VCardText',
-                                'props': {'text': stats_text}
-                            }
-                        ]
-                    }]
-                }]
+                'content': [
+                    {
+                        'component': 'VCol',
+                        'props': {'cols': 12, 'md': 6},
+                        'content': [{
+                            'component': 'VCard',
+                            'props': {'variant': 'tonal'},
+                            'content': [
+                                {
+                                    'component': 'VCardTitle',
+                                    'props': {'text': '统计'}
+                                },
+                                {
+                                    'component': 'VCardText',
+                                    'props': {'text': stats_text}
+                                }
+                            ]
+                        }]
+                    },
+                    {
+                        'component': 'VCol',
+                        'props': {'cols': 12, 'md': 6},
+                        'content': [{
+                            'component': 'VCard',
+                            'props': {'variant': 'tonal'},
+                            'content': [
+                                {
+                                    'component': 'VCardTitle',
+                                    'props': {'text': '待处理任务'}
+                                },
+                                {
+                                    'component': 'VCardText',
+                                    'props': {'text': tasks_text}
+                                }
+                            ]
+                        }]
+                    }
+                ]
             }
         ]
 
@@ -582,11 +682,10 @@ class Enhanced115(_PluginBase):
             self._stop_event.set()
             
             if self._upload_executor:
-                logger.info("【Enhanced115】正在停止上传线程池...")
+                logger.info("【Enhanced115】正在停止...")
                 self._upload_executor.shutdown(wait=False)
                 self._upload_executor = None
             
-            # 清空队列
             while not self._upload_queue.empty():
                 try:
                     self._upload_queue.get_nowait()
@@ -594,7 +693,7 @@ class Enhanced115(_PluginBase):
                 except queue.Empty:
                     break
             
-            logger.info("【Enhanced115】插件服务已停止")
+            logger.info("【Enhanced115】已停止")
             
         except Exception as e:
             logger.error(f"【Enhanced115】停止服务时出错：{e}")
