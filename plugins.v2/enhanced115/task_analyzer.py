@@ -109,20 +109,22 @@ class TaskAnalyzer:
         用于判断"完结"等关键字
         """
         try:
-            from app.db.message_oper import MessageOper
+            from app.db.models.message import Message
+            from app.db import db
             
             torrent_name = download_history.torrent_name
             if not torrent_name:
                 return ""
             
-            message_oper = MessageOper()
+            # 直接查询message表
+            # 查找mtype='资源下载'且text包含torrent_name的消息
+            messages = db.query(Message).filter(
+                Message.mtype == '资源下载',
+                Message.text.like(f'%{torrent_name}%')
+            ).order_by(Message.reg_time.desc()).limit(1).all()
             
-            # 查询资源下载类型的消息，包含种子名称
-            messages = message_oper.list_by_type('资源下载')
-            
-            for msg in messages:
-                if torrent_name in (msg.text or ''):
-                    return msg.text or ''
+            if messages:
+                return messages[0].text or ''
             
             return ""
             
