@@ -302,36 +302,37 @@ class Enhanced115(_PluginBase):
             if transferinfo.target_item.storage != 'local':
                 return
             
-            # 如果没有download_hash（手动整理或重新整理），通过记录链查询
+            # 如果没有download_hash（手动整理或重新整理），从downloadfiles表查询
             if not download_hash:
                 try:
                     from app.db.transferhistory_oper import TransferHistoryOper
+                    from app.db.downloadhistory_oper import DownloadHistoryOper
                     
                     transferhis = TransferHistoryOper()
-                    # 1. 用dest路径查询当前成功记录
+                    # 用dest路径查询当前成功记录
                     record = transferhis.get_by_dest(transferinfo.target_item.path)
                     
                     if record:
-                        # 2. 先尝试直接获取download_hash
+                        # 先尝试直接获取download_hash
                         if record.download_hash:
                             download_hash = record.download_hash
-                            logger.info(f"【Enhanced115】从当前记录恢复download_hash：{download_hash[:8]}...")
+                            logger.info(f"【Enhanced115】从记录恢复download_hash：{download_hash[:8]}...")
                         else:
-                            # 3. download_hash为空，说明是手动整理
-                            # 从src_fileitem获取原始文件路径，查询旧的失败记录
+                            # download_hash为空，从downloadfiles表查询
                             src_fileitem = record.src_fileitem
                             if src_fileitem and isinstance(src_fileitem, dict):
                                 original_src_path = src_fileitem.get('path')
                                 
                                 if original_src_path:
-                                    # 用原始路径查询旧记录（失败的记录）
-                                    old_record = transferhis.get_by_src(original_src_path, storage='local')
+                                    # 用完整文件路径去downloadfiles表查询
+                                    download_oper = DownloadHistoryOper()
+                                    download_file = download_oper.get_file_by_fullpath(original_src_path)
                                     
-                                    if old_record and old_record.download_hash:
-                                        download_hash = old_record.download_hash
+                                    if download_file and download_file.download_hash:
+                                        download_hash = download_file.download_hash
                                         logger.info(
-                                            f"【Enhanced115】通过src_fileitem.path查询到旧记录，"
-                                            f"恢复download_hash：{download_hash[:8]}..."
+                                            f"【Enhanced115】从downloadfiles恢复download_hash："
+                                            f"{download_hash[:8]}...，文件：{transferinfo.target_item.name}"
                                         )
                             
                             if not download_hash:
@@ -758,41 +759,54 @@ class Enhanced115(_PluginBase):
         :param file_path: 本地文件路径
         """
         try:
-            from app.db.transferhistory_oper import TransferHistoryOper
-            
-            # 获取download_hash（可能需要从旧记录恢复）
+            # 获取download_hash
             download_hash = record.download_hash
-            logger.debug(f"【Enhanced115】扫描调试1 | record.download_hash={download_hash}")
             
-            # 如果download_hash为null，用src_fileitem.path查询旧记录
+            # 如果download_hash为null，从downloadfiles表查询
             if not download_hash:
                 src_fileitem = record.src_fileitem
-                logger.debug(f"【Enhanced115】扫描调试2 | src_fileitem类型={type(src_fileitem)}, 存在={src_fileitem is not None}")
                 
                 if src_fileitem and isinstance(src_fileitem, dict):
                     original_src_path = src_fileitem.get('path')
-                    logger.debug(f"【Enhanced115】扫描调试3 | original_src_path={original_src_path}")
                     
                     if original_src_path:
-                        transferhis = TransferHistoryOper()
-                        old_record = transferhis.get_by_src(original_src_path, storage='local')
-                        logger.debug(f"【Enhanced115】扫描调试4 | old_record存在={old_record is not None}")
+                        # 用完整文件路径去downloadfiles表查询
+                        from app.db.downloadhistory_oper import DownloadHistoryOper
                         
-                        if old_record:
-                            logger.debug(f"【Enhanced115】扫描调试5 | old_record.download_hash={old_record.download_hash}")
-                            
-                            if old_record.download_hash:
-                                download_hash = old_record.download_hash
-                                logger.info(
-                                    f"【Enhanced115】扫描时通过src_fileitem恢复download_hash："
-                                    f"{download_hash[:8]}...，文件：{file_path.name}"
-                                )
+                        download_oper = DownloadHistoryOper()
+                        download_file = download_oper.get_file_by_fullpath(original_src_path)
+                        
+                        if download_file and download_file.download_hash:
+                            download_hash = download_file.download_hash
+                            logger.info(
+                                f"【Enhanced115】从downloadfiles恢复download_hash："
+                                f"{download_hash[:8]}...，文件：{file_path.name}"
+                            )
+            
+            # 如果还是没有download_hash，无法处理
+            if not download_hash:
+                logger.debug(f"【Enhanced115】无download_hash，跳过：{file_path.name}")
+                return
             
             # 获取任务信息
             task = self._task_manager.get_task(download_hash)
             
             if not task:
-                logger.warning(f"【Enhanced115】未找到任务信息：{download_hash}，跳过重新上传")
+                # 任务已移除，说明已完成并分享
+                # 检查文件是否真的已上传到115
+                if record.dest_storage == 'u115':
+                    dest_fileitem = record.dest_fileitem
+                    if dest_fileitem and isinstance(dest_fileitem, dict) and dest_fileitem.get('fileid'):
+                        # 已上传，删除本地文件
+                        try:
+                            file_path.unlink()
+                            logger.info(f"【Enhanced115】任务已完成，删除已上传文件：{file_path.name}")
+                        except Exception as del_err:
+                            logger.warning(f"【Enhanced115】删除文件失败：{file_path.name}，{del_err}")
+                    else:
+                        logger.error(f"【Enhanced115】任务已完成但文件未上传（数据异常）：{file_path.name}")
+                else:
+                    logger.warning(f"【Enhanced115】任务已完成但记录显示未上传，跳过：{file_path.name}")
                 return
             
             # 映射远程路径
