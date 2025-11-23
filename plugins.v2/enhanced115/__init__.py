@@ -1455,6 +1455,7 @@ class Enhanced115(_PluginBase):
             ]
             
             # 如果启用STRM，添加全量同步按钮
+            logger.info(f"【Enhanced115】_strm_enabled={self._strm_enabled}")
             if self._strm_enabled:
                 page_content.append({
                     'component': 'VRow',

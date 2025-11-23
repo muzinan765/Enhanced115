@@ -6,7 +6,27 @@ from pathlib import Path
 from typing import Optional
 from queue import Queue
 from threading import Thread
-from itertools import batched
+try:
+    from itertools import batched
+except ImportError:  # Python < 3.12
+    from itertools import islice
+
+    def batched(iterable, n):
+        """
+        Backport of itertools.batched for Python < 3.12.
+
+        :param iterable: 任意可迭代对象
+        :param n: 批大小，必须为正整数
+        """
+        if n <= 0:
+            raise ValueError("batch size must be positive")
+
+        iterator = iter(iterable)
+        while True:
+            batch = tuple(islice(iterator, n))
+            if not batch:
+                break
+            yield batch
 from time import perf_counter
 
 from app.log import logger
