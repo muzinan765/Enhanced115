@@ -302,11 +302,12 @@ class Enhanced115(_PluginBase):
             if transferinfo.target_item.storage != 'local':
                 return
             
-            # 如果没有download_hash（手动整理或重新整理），从downloadfiles表查询
+            # 如果没有download_hash（手动整理或重新整理），通过savepath + episodes匹配
             if not download_hash:
                 try:
                     from app.db.transferhistory_oper import TransferHistoryOper
                     from app.db.downloadhistory_oper import DownloadHistoryOper
+                    from pathlib import Path
                     
                     transferhis = TransferHistoryOper()
                     # 用dest路径查询当前成功记录
@@ -318,25 +319,38 @@ class Enhanced115(_PluginBase):
                             download_hash = record.download_hash
                             logger.info(f"【Enhanced115】从记录恢复download_hash：{download_hash[:8]}...")
                         else:
-                            # download_hash为空，从downloadfiles表查询
+                            # download_hash为空，通过savepath + episodes匹配
                             src_fileitem = record.src_fileitem
-                            if src_fileitem and isinstance(src_fileitem, dict):
+                            episodes = record.episodes
+                            
+                            if src_fileitem and isinstance(src_fileitem, dict) and episodes:
                                 original_src_path = src_fileitem.get('path')
                                 
                                 if original_src_path:
-                                    # 用完整文件路径去downloadfiles表查询
-                                    download_oper = DownloadHistoryOper()
-                                    download_file = download_oper.get_file_by_fullpath(original_src_path)
+                                    # 提取种子目录（savepath）
+                                    savepath = str(Path(original_src_path).parent)
                                     
-                                    if download_file and download_file.download_hash:
-                                        download_hash = download_file.download_hash
-                                        logger.info(
-                                            f"【Enhanced115】从downloadfiles恢复download_hash："
-                                            f"{download_hash[:8]}...，文件：{transferinfo.target_item.name}"
-                                        )
+                                    # 查询这个种子的所有文件
+                                    download_oper = DownloadHistoryOper()
+                                    download_files = download_oper.get_files_by_savepath(savepath)
+                                    
+                                    if download_files:
+                                        # 在文件列表中匹配episodes
+                                        for df in download_files:
+                                            # 检查文件名是否包含episodes
+                                            if episodes in df.filepath or episodes in df.fullpath:
+                                                # 验证这个download_hash在pending_tasks中
+                                                pending_tasks = self._task_manager.get_all_pending_tasks()
+                                                if df.download_hash in pending_tasks:
+                                                    download_hash = df.download_hash
+                                                    logger.info(
+                                                        f"【Enhanced115】通过savepath+episodes匹配到download_hash："
+                                                        f"{download_hash[:8]}...，文件：{transferinfo.target_item.name}"
+                                                    )
+                                                    break
                             
                             if not download_hash:
-                                logger.debug(f"【Enhanced115】无法恢复download_hash，跳过")
+                                logger.debug(f"【Enhanced115】无法匹配download_hash，跳过")
                                 return
                     else:
                         logger.debug(f"【Enhanced115】无法查询到整理记录，跳过")
@@ -762,30 +776,43 @@ class Enhanced115(_PluginBase):
             # 获取download_hash
             download_hash = record.download_hash
             
-            # 如果download_hash为null，从downloadfiles表查询
+            # 如果download_hash为null，通过savepath + episodes匹配
             if not download_hash:
                 src_fileitem = record.src_fileitem
+                episodes = record.episodes
                 
-                if src_fileitem and isinstance(src_fileitem, dict):
+                if src_fileitem and isinstance(src_fileitem, dict) and episodes:
                     original_src_path = src_fileitem.get('path')
                     
                     if original_src_path:
-                        # 用完整文件路径去downloadfiles表查询
                         from app.db.downloadhistory_oper import DownloadHistoryOper
+                        from pathlib import Path
                         
+                        # 提取种子目录（savepath）
+                        savepath = str(Path(original_src_path).parent)
+                        
+                        # 查询这个种子的所有文件
                         download_oper = DownloadHistoryOper()
-                        download_file = download_oper.get_file_by_fullpath(original_src_path)
+                        download_files = download_oper.get_files_by_savepath(savepath)
                         
-                        if download_file and download_file.download_hash:
-                            download_hash = download_file.download_hash
-                            logger.info(
-                                f"【Enhanced115】从downloadfiles恢复download_hash："
-                                f"{download_hash[:8]}...，文件：{file_path.name}"
-                            )
+                        if download_files:
+                            # 在文件列表中匹配episodes
+                            for df in download_files:
+                                # 检查文件名是否包含episodes
+                                if episodes in df.filepath or episodes in df.fullpath:
+                                    # 验证这个download_hash在pending_tasks中
+                                    pending_tasks = self._task_manager.get_all_pending_tasks()
+                                    if df.download_hash in pending_tasks:
+                                        download_hash = df.download_hash
+                                        logger.info(
+                                            f"【Enhanced115】通过savepath+episodes匹配到download_hash："
+                                            f"{download_hash[:8]}...，文件：{file_path.name}"
+                                        )
+                                        break
             
             # 如果还是没有download_hash，无法处理
             if not download_hash:
-                logger.debug(f"【Enhanced115】无download_hash，跳过：{file_path.name}")
+                logger.debug(f"【Enhanced115】无法匹配download_hash，跳过：{file_path.name}")
                 return
             
             # 获取任务信息
@@ -804,9 +831,24 @@ class Enhanced115(_PluginBase):
                         except Exception as del_err:
                             logger.warning(f"【Enhanced115】删除文件失败：{file_path.name}，{del_err}")
                     else:
-                        logger.error(f"【Enhanced115】任务已完成但文件未上传（数据异常）：{file_path.name}")
+                        # fileid不存在但任务已完成，说明是历史遗留问题
+                        # 尝试删除本地文件（任务已完成说明已分享，应该已上传）
+                        try:
+                            file_path.unlink()
+                            logger.info(f"【Enhanced115】任务已完成（清理遗留文件）：{file_path.name}")
+                        except Exception as del_err:
+                            logger.warning(f"【Enhanced115】删除文件失败：{file_path.name}，{del_err}")
                 else:
-                    logger.warning(f"【Enhanced115】任务已完成但记录显示未上传，跳过：{file_path.name}")
+                    # dest_storage='local'但任务已完成
+                    # 说明文件还没上传，但任务已分享（可能是脏数据或count统计错了）
+                    logger.warning(
+                        f"【Enhanced115】任务已完成但记录显示未上传（数据异常），"
+                        f"删除本地文件：{file_path.name}"
+                    )
+                    try:
+                        file_path.unlink()
+                    except Exception as del_err:
+                        logger.warning(f"【Enhanced115】删除文件失败：{file_path.name}，{del_err}")
                 return
             
             # 映射远程路径
