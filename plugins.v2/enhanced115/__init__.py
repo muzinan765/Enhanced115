@@ -367,8 +367,14 @@ class Enhanced115(_PluginBase):
         download_hash = upload_task['download_hash']
         task_info = upload_task['task_info']
         filename = local_path.name
+        src_path = upload_task['fileitem'].path
         
-        # 1. 上传到115
+        # 1. 检查是否是替换操作（洗版）
+        old_file_id = self._check_and_delete_old_file(src_path)
+        if old_file_id:
+            logger.info(f"【Enhanced115】检测到替换操作，已删除115上的旧文件：{filename}")
+        
+        # 2. 上传到115
         success, file_info = self._uploader.upload_file(local_path, remote_path, filename)
         
         if not success:
@@ -558,6 +564,181 @@ class Enhanced115(_PluginBase):
         except Exception as e:
             logger.debug(f"【Enhanced115】获取episodes信息失败：{e}")
             return ""
+    
+    def _check_and_delete_old_file(self, src_path: str) -> Optional[str]:
+        """
+        检查是否是替换操作（洗版），如果是则删除115上的旧文件
+        
+        :param src_path: 源文件路径
+        :return: 旧文件的fileid（如果删除成功）
+        """
+        try:
+            from app.db.transferhistory_oper import TransferHistoryOper
+            
+            transferhis = TransferHistoryOper()
+            
+            # 查询是否已有记录
+            existing_record = transferhis.get_by_src(src_path, storage='local')
+            
+            # 如果记录存在且已上传到115，说明这是替换操作
+            if existing_record and existing_record.dest_storage == 'u115':
+                dest_fileitem = existing_record.dest_fileitem
+                
+                if dest_fileitem and isinstance(dest_fileitem, dict):
+                    old_fileid = dest_fileitem.get('fileid')
+                    
+                    if old_fileid:
+                        logger.info(f"【Enhanced115】检测到替换操作，旧文件ID：{old_fileid}")
+                        
+                        # 删除115上的旧文件
+                        try:
+                            delete_result = self._p115_client.fs_delete(old_fileid)
+                            if delete_result and delete_result.get('state'):
+                                logger.info(f"【Enhanced115】已删除115上的旧文件：{old_fileid}")
+                                return old_fileid
+                            else:
+                                logger.warning(f"【Enhanced115】删除115旧文件失败：{delete_result}")
+                        except Exception as del_err:
+                            logger.error(f"【Enhanced115】删除115旧文件异常：{del_err}")
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"【Enhanced115】检查旧文件失败：{e}")
+            return None
+    
+    def _scan_and_clean_uploaded_files(self):
+        """
+        扫描/media目录，清理已上传的文件或重新上传未成功的文件
+        
+        逻辑：
+        1. 扫描/media目录下的所有媒体文件
+        2. 查询transferhistory表检查状态
+        3. dest_storage='u115'且fileid存在 → 删除本地文件
+        4. dest_storage='local'或fileid为null → 重新上传
+        """
+        if not self._enabled or not self._p115_client:
+            return
+        
+        try:
+            from pathlib import Path
+            from app.db.transferhistory_oper import TransferHistoryOper
+            
+            logger.info("【Enhanced115】开始扫描/media目录...")
+            
+            # 获取/media路径（从path_mappings提取）
+            media_paths = []
+            for mapping in self._path_mappings:
+                local_path = mapping.get('local')
+                if local_path and 'media' in local_path.lower():
+                    media_paths.append(Path(local_path))
+            
+            if not media_paths:
+                logger.warning("【Enhanced115】未找到/media路径配置")
+                return
+            
+            transferhis = TransferHistoryOper()
+            deleted_count = 0
+            reupload_count = 0
+            
+            for media_path in media_paths:
+                if not media_path.exists():
+                    continue
+                
+                # 递归扫描所有媒体文件
+                video_exts = {'.mkv', '.mp4', '.avi', '.ts', '.m2ts', '.iso'}
+                for file_path in media_path.rglob('*'):
+                    if not file_path.is_file():
+                        continue
+                    
+                    if file_path.suffix.lower() not in video_exts:
+                        continue
+                    
+                    # 查询数据库记录（文件在/media，但transferhistory记录的dest是/media的local路径）
+                    # 注意：整理后的文件路径在dest字段，src是downloads路径
+                    record = transferhis.get_by_dest(str(file_path))
+                    
+                    if not record:
+                        continue
+                    
+                    # 检查上传状态
+                    if record.dest_storage == 'u115':
+                        # 检查是否真的上传成功（fileid存在）
+                        dest_fileitem = record.dest_fileitem
+                        if dest_fileitem and isinstance(dest_fileitem, dict):
+                            fileid = dest_fileitem.get('fileid')
+                            if fileid:
+                                # 已上传成功，删除本地文件
+                                try:
+                                    file_path.unlink()
+                                    deleted_count += 1
+                                    logger.info(f"【Enhanced115】已删除已上传文件：{file_path.name}")
+                                except Exception as del_err:
+                                    logger.warning(f"【Enhanced115】删除文件失败：{file_path.name}，{del_err}")
+                            else:
+                                # fileid为null，是脏数据，需要重新上传
+                                logger.info(f"【Enhanced115】发现脏数据（fileid=null），准备重新上传：{file_path.name}")
+                                self._reupload_file(record, file_path)
+                                reupload_count += 1
+                        else:
+                            # dest_fileitem为空，是脏数据
+                            logger.info(f"【Enhanced115】发现脏数据（dest_fileitem=null），准备重新上传：{file_path.name}")
+                            self._reupload_file(record, file_path)
+                            reupload_count += 1
+                    elif record.dest_storage == 'local':
+                        # 未上传，重新上传
+                        logger.info(f"【Enhanced115】发现未上传文件，准备上传：{file_path.name}")
+                        self._reupload_file(record, file_path)
+                        reupload_count += 1
+            
+            logger.info(
+                f"【Enhanced115】扫描完成 | "
+                f"已删除={deleted_count}个 | "
+                f"重新上传={reupload_count}个"
+            )
+            
+        except Exception as e:
+            logger.error(f"【Enhanced115】扫描清理异常：{e}")
+    
+    def _reupload_file(self, record, file_path: Path):
+        """
+        重新上传文件
+        
+        :param record: transferhistory记录
+        :param file_path: 本地文件路径
+        """
+        try:
+            # 获取任务信息
+            download_hash = record.download_hash
+            task = self._task_manager.get_task(download_hash)
+            
+            if not task:
+                logger.warning(f"【Enhanced115】未找到任务信息：{download_hash}，跳过重新上传")
+                return
+            
+            # 映射远程路径
+            remote_path = map_local_to_remote(str(file_path), self._path_mappings)
+            if not remote_path:
+                logger.warning(f"【Enhanced115】路径映射失败：{file_path}")
+                return
+            
+            # 构建上传任务
+            upload_task = {
+                'local_path': file_path,
+                'remote_path': remote_path,
+                'download_hash': download_hash,
+                'task_info': task,
+                'fileitem': {'path': record.src},  # 从记录重建fileitem
+                'meta': None,
+                'mediainfo': None,
+            }
+            
+            # 加入上传队列
+            self._upload_queue.put(upload_task)
+            logger.info(f"【Enhanced115】已加入重新上传队列：{file_path.name}")
+            
+        except Exception as e:
+            logger.error(f"【Enhanced115】重新上传失败：{e}")
 
     def _trigger_share(self, download_hash: str, task_info: dict):
         """
@@ -1036,7 +1217,7 @@ class Enhanced115(_PluginBase):
         if not self._enabled:
             return []
         
-        return [{
+        services = [{
             "id": "Enhanced115.check_pending_tasks",
             "name": "检查待处理任务",
             "trigger": "interval",
@@ -1045,6 +1226,20 @@ class Enhanced115(_PluginBase):
                 "seconds": 300  # 每5分钟执行一次
             }
         }]
+        
+        # 如果开启了删除功能，添加目录扫描服务
+        if self._delete_after_upload:
+            services.append({
+                "id": "Enhanced115.scan_and_clean",
+                "name": "扫描清理已上传文件",
+                "trigger": "interval",
+                "func": self._scan_and_clean_uploaded_files,
+                "kwargs": {
+                    "seconds": 3600  # 每小时执行一次
+                }
+            })
+        
+        return services
 
     def stop_service(self):
         """停止插件服务"""
