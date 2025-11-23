@@ -1412,7 +1412,7 @@ class Enhanced115(_PluginBase):
             page_content = [
                 {
                     'component': 'VRow',
-                'content': [
+                    'content': [
                     {
                         'component': 'VCol',
                         'props': {'cols': 12, 'md': 6},
