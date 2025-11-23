@@ -409,7 +409,13 @@ class Enhanced115(_PluginBase):
         download_hash = upload_task['download_hash']
         task_info = upload_task['task_info']
         filename = local_path.name
-        src_path = upload_task['fileitem'].path
+        
+        # 提取src_path（兼容dict和对象）
+        fileitem = upload_task['fileitem']
+        if isinstance(fileitem, dict):
+            src_path = fileitem['path']
+        else:
+            src_path = fileitem.path
         
         # 1. 检查是否是替换操作（洗版）
         old_file_id = self._check_and_delete_old_file(src_path)
@@ -426,12 +432,7 @@ class Enhanced115(_PluginBase):
         
         # 2. 更新数据库（local→u115）
         # ⚠️ 关键：传入src_path，只更新当前文件的记录
-        fileitem = upload_task['fileitem']
-        # fileitem可能是dict或对象，统一处理
-        if isinstance(fileitem, dict):
-            src_path = fileitem['path']
-        else:
-            src_path = fileitem.path
+        # src_path已在上面提取
         db_updated = DatabaseHandler.update_transfer_record(
             src_path,
             download_hash,
