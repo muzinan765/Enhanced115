@@ -1385,9 +1385,11 @@ class Enhanced115(_PluginBase):
 
     def get_page(self) -> List[dict]:
         """拼装插件详情页面"""
+        logger.info("【Enhanced115】get_page被调用")
         try:
             # 获取所有待处理任务
             pending_tasks = self._task_manager.get_all_pending_tasks() if self._task_manager else {}
+            logger.info(f"【Enhanced115】pending_tasks数量：{len(pending_tasks)}")
             
             tasks_text = ""
             for download_hash, task in pending_tasks.items():
