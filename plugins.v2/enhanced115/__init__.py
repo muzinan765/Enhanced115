@@ -1392,66 +1392,45 @@ class Enhanced115(_PluginBase):
             pending_tasks = self._task_manager.get_all_pending_tasks() if self._task_manager else {}
             logger.info(f"【Enhanced115】pending_tasks数量：{len(pending_tasks)}")
             
-            tasks_text = ""
-            for download_hash, task in pending_tasks.items():
-                tasks_text += (
-                    f"{task['media_title']}：{task['actual_count']}/{task['expected_count']} "
-                    f"[{task['share_mode']}]\\n"
-                )
+            task_lines = [
+                f"{task['media_title']}：{task['actual_count']}/{task['expected_count']} "
+                f"[{task['share_mode']}]"
+                for task in pending_tasks.values()
+            ]
+            tasks_text = "\\n".join(task_lines) if task_lines else "无待处理任务"
             
-            if not tasks_text:
-                tasks_text = "无待处理任务"
+            stats_text = "\\n".join([
+                f"总任务：{self._stats['total_tasks']}",
+                f"已上传：{self._stats['uploaded']}",
+                f"已分享：{self._stats['shared']}",
+                f"失败：{self._stats['failed']}",
+                f"队列：{self._stats['queue_size']}",
+            ])
             
-            stats_text = (
-                f"总任务：{self._stats['total_tasks']}\\n"
-                f"已上传：{self._stats['uploaded']}\\n"
-                f"已分享：{self._stats['shared']}\\n"
-                f"失败：{self._stats['failed']}\\n"
-                f"队列：{self._stats['queue_size']}"
-            )
+            def build_alert_row(title: str, text: str, color: str) -> dict:
+                """组装展示信息的VAlert行"""
+                return {
+                    'component': 'VRow',
+                    'content': [{
+                        'component': 'VCol',
+                        'props': {'cols': 12},
+                        'content': [{
+                            'component': 'VAlert',
+                            'props': {
+                                'color': color,
+                                'variant': 'tonal',
+                                'density': 'comfortable',
+                                'class': 'text-pre-wrap text-body-2',
+                                'title': title,
+                                'text': text
+                            }
+                        }]
+                    }]
+                }
             
             page_content = [
-                {
-                    'component': 'VRow',
-                    'content': [
-                    {
-                        'component': 'VCol',
-                        'props': {'cols': 12, 'md': 6},
-                        'content': [{
-                            'component': 'VCard',
-                            'props': {'variant': 'tonal'},
-                            'content': [
-                                {
-                                    'component': 'VCardTitle',
-                                    'props': {'text': '统计'}
-                                },
-                                {
-                                    'component': 'VCardText',
-                                    'props': {'text': stats_text}
-                                }
-                            ]
-                        }]
-                    },
-                    {
-                        'component': 'VCol',
-                        'props': {'cols': 12, 'md': 6},
-                        'content': [{
-                            'component': 'VCard',
-                            'props': {'variant': 'tonal'},
-                            'content': [
-                                {
-                                    'component': 'VCardTitle',
-                                    'props': {'text': '待处理任务'}
-                                },
-                                {
-                                    'component': 'VCardText',
-                                    'props': {'text': tasks_text}
-                                }
-                            ]
-                        }]
-                    }
-                ]
-                }
+                build_alert_row('任务统计', stats_text, 'primary'),
+                build_alert_row('待处理任务', tasks_text, 'secondary')
             ]
             
             # 如果启用STRM，添加全量同步按钮
@@ -1459,43 +1438,42 @@ class Enhanced115(_PluginBase):
             if self._strm_enabled:
                 page_content.append({
                     'component': 'VRow',
-                    'content': [{
-                        'component': 'VCol',
-                        'props': {'cols': 12},
-                        'content': [{
-                            'component': 'VCard',
-                            'props': {'variant': 'tonal'},
-                            'content': [
-                                {
-                                    'component': 'VCardTitle',
-                                    'props': {'text': 'STRM管理'}
-                                },
-                                {
-                                    'component': 'VCardText',
-                                    'props': {
-                                        'text': 'STRM文件映射115网盘文件，支持洗版自动管理'
-                                    }
-                                },
-                                {
-                                    'component': 'VCardActions',
-                                    'content': [{
-                                        'component': 'VBtn',
-                                        'props': {
-                                            'text': '全量同步115到STRM',
-                                            'color': 'primary',
-                                            'variant': 'elevated'
-                                        },
-                                        'events': {
-                                            'click': {
-                                                'api': 'plugin/Enhanced115/strm_full_sync',
-                                                'method': 'post'
-                                            }
-                                        }
-                                    }]
+                    'content': [
+                        {
+                            'component': 'VCol',
+                            'props': {'cols': 12, 'md': 8},
+                            'content': [{
+                                'component': 'VAlert',
+                                'props': {
+                                    'color': 'success',
+                                    'variant': 'tonal',
+                                    'density': 'comfortable',
+                                    'title': 'STRM管理',
+                                    'text': 'STRM文件映射115网盘文件，支持洗版自动管理',
+                                    'class': 'text-pre-wrap'
                                 }
-                            ]
-                        }]
-                    }]
+                            }]
+                        },
+                        {
+                            'component': 'VCol',
+                            'props': {'cols': 12, 'md': 4, 'class': 'd-flex align-center'},
+                            'content': [{
+                                'component': 'VBtn',
+                                'props': {
+                                    'color': 'primary',
+                                    'variant': 'elevated',
+                                    'size': 'large'
+                                },
+                                'content': '全量同步115到STRM',
+                                'events': {
+                                    'click': {
+                                        'api': 'plugin/Enhanced115/strm_full_sync',
+                                        'method': 'post'
+                                    }
+                                }
+                            }]
+                        }
+                    ]
                 })
             
             logger.info(f"【Enhanced115】page_content长度：{len(page_content)}")
