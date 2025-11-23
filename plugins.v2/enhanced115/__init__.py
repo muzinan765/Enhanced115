@@ -300,6 +300,48 @@ class Enhanced115(_PluginBase):
             if transferinfo.target_item.storage != 'local':
                 return
             
+            # 如果没有download_hash（手动整理或重新整理），通过记录链查询
+            if not download_hash:
+                try:
+                    from app.db.transferhistory_oper import TransferHistoryOper
+                    
+                    transferhis = TransferHistoryOper()
+                    # 1. 用dest路径查询当前成功记录
+                    record = transferhis.get_by_dest(transferinfo.target_item.path)
+                    
+                    if record:
+                        # 2. 先尝试直接获取download_hash
+                        if record.download_hash:
+                            download_hash = record.download_hash
+                            logger.info(f"【Enhanced115】从当前记录恢复download_hash：{download_hash[:8]}...")
+                        else:
+                            # 3. download_hash为空，说明是手动整理
+                            # 从src_fileitem获取原始文件路径，查询旧的失败记录
+                            src_fileitem = record.src_fileitem
+                            if src_fileitem and isinstance(src_fileitem, dict):
+                                original_src_path = src_fileitem.get('path')
+                                
+                                if original_src_path:
+                                    # 用原始路径查询旧记录（失败的记录）
+                                    old_record = transferhis.get_by_src(original_src_path, storage='local')
+                                    
+                                    if old_record and old_record.download_hash:
+                                        download_hash = old_record.download_hash
+                                        logger.info(
+                                            f"【Enhanced115】通过src_fileitem.path查询到旧记录，"
+                                            f"恢复download_hash：{download_hash[:8]}..."
+                                        )
+                            
+                            if not download_hash:
+                                logger.debug(f"【Enhanced115】无法恢复download_hash，跳过")
+                                return
+                    else:
+                        logger.debug(f"【Enhanced115】无法查询到整理记录，跳过")
+                        return
+                except Exception as e:
+                    logger.warning(f"【Enhanced115】查询download_hash失败：{e}")
+                    return
+            
             # 检查是否有对应的任务
             task = self._task_manager.get_task(download_hash)
             if not task:
