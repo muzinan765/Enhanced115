@@ -32,6 +32,7 @@ from .telegram_notifier import TelegramNotifier
 from .task_analyzer import TaskAnalyzer
 from .task_manager import TaskManager
 from .password_strategy import PasswordStrategy
+from .strm_manager import StrmManager
 from .utils import map_local_to_remote, parse_path_mappings
 
 
@@ -81,12 +82,18 @@ class Enhanced115(_PluginBase):
         self._delete_after_upload = False  # 上传后删除本地文件
         self._scan_interval = 1800  # 扫描间隔（秒）
         
+        # STRM配置
+        self._strm_enabled = False  # 是否启用strm管理
+        self._emby_local_path = "/Emby"  # 本地Emby目录路径
+        self._strm_overwrite_mode = "auto"  # strm覆盖模式：never/always/auto
+        
         # 处理器
         self._p115_client = None
         self._uploader = None
         self._sharer = None
         self._telegram = None
         self._task_manager = None
+        self._strm_manager = None
         
         # 上传队列
         self._upload_queue = queue.Queue()
@@ -136,6 +143,11 @@ class Enhanced115(_PluginBase):
         self._delete_after_upload = config.get("delete_after_upload", False)
         self._scan_interval = int(config.get("scan_interval", 1800))
         
+        # STRM配置
+        self._strm_enabled = config.get("strm_enabled", False)
+        self._emby_local_path = config.get("emby_local_path", "/Emby")
+        self._strm_overwrite_mode = config.get("strm_overwrite_mode", "auto")
+        
         # 停止旧服务
         self.stop_service()
         
@@ -176,6 +188,15 @@ class Enhanced115(_PluginBase):
                     self._telegram_bot_token,
                     self._telegram_chat_id
                 )
+            
+            # 初始化STRM管理器
+            if self._strm_enabled:
+                self._strm_manager = StrmManager(
+                    self._p115_client,
+                    self._emby_local_path,
+                    self._strm_overwrite_mode
+                )
+                logger.info("【Enhanced115】STRM管理器已初始化")
             
             # 启动上传队列
             self._start_upload_workers()
@@ -435,9 +456,17 @@ class Enhanced115(_PluginBase):
             src_path = fileitem.path
         
         # 1. 检查是否是替换操作（洗版）
-        old_file_id = self._check_and_delete_old_file(src_path)
-        if old_file_id:
-            logger.info(f"【Enhanced115】检测到替换操作，已删除115上的旧文件：{filename}")
+        # 如果启用strm，使用strm方式检测；否则使用数据库方式
+        old_version_count = 0
+        if self._strm_enabled and self._strm_manager:
+            # STRM模式：检查旧版本strm（不删除，等上传成功后删除）
+            is_movie = task_info.get('is_movie', False)
+            old_version_count = self._strm_manager.check_and_delete_old_version(remote_path, is_movie)
+        else:
+            # 传统模式：通过数据库检测并删除
+            old_file_id = self._check_and_delete_old_file(src_path)
+            if old_file_id:
+                logger.info(f"【Enhanced115】检测到替换操作，已删除115上的旧文件：{filename}")
         
         # 2. 上传到115
         success, file_info = self._uploader.upload_file(local_path, remote_path, filename)
@@ -460,6 +489,18 @@ class Enhanced115(_PluginBase):
         if db_updated:
             self._stats['uploaded'] += 1
             logger.info(f"【Enhanced115】上传并更新数据库成功：{filename}")
+            
+            # STRM功能：生成strm文件
+            if self._strm_enabled and self._strm_manager:
+                # 删除115上的旧版本（如果有）
+                if old_version_count > 0:
+                    deleted_count = self._strm_manager.delete_pending_old_versions()
+                    if deleted_count > 0:
+                        logger.info(f"【Enhanced115】已删除{deleted_count}个旧版本")
+                
+                # 生成新strm
+                is_movie = task_info.get('is_movie', False)
+                self._strm_manager.handle_upload_success(local_path, remote_path, file_info, is_movie)
             
             # 上传成功后删除本地文件（如果配置开启）
             if self._delete_after_upload:
@@ -1224,6 +1265,56 @@ class Enhanced115(_PluginBase):
                             }
                         ]
                     },
+                    # STRM配置
+                    {
+                        'component': 'VRow',
+                        'content': [
+                            {
+                                'component': 'VCol',
+                                'props': {'cols': 12, 'md': 6},
+                                'content': [{
+                                    'component': 'VSwitch',
+                                    'props': {
+                                        'model': 'strm_enabled',
+                                        'label': '启用STRM管理',
+                                        'hint': '生成strm文件映射115文件，支持洗版管理'
+                                    }
+                                }]
+                            },
+                            {
+                                'component': 'VCol',
+                                'props': {'cols': 12, 'md': 6},
+                                'content': [{
+                                    'component': 'VTextField',
+                                    'props': {
+                                        'model': 'emby_local_path',
+                                        'label': '本地Emby目录',
+                                        'hint': '容器内路径，默认/Emby'
+                                    }
+                                }]
+                            }
+                        ]
+                    },
+                    {
+                        'component': 'VRow',
+                        'content': [{
+                            'component': 'VCol',
+                            'props': {'cols': 12, 'md': 6},
+                            'content': [{
+                                'component': 'VSelect',
+                                'props': {
+                                    'model': 'strm_overwrite_mode',
+                                    'label': 'STRM覆盖模式',
+                                    'items': [
+                                        {'title': '自动（检查格式）', 'value': 'auto'},
+                                        {'title': '总是覆盖', 'value': 'always'},
+                                        {'title': '从不覆盖', 'value': 'never'}
+                                    ],
+                                    'hint': 'auto=检查是否插件格式，always=强制覆盖，never=跳过'
+                                }
+                            }]
+                        }]
+                    },
                     # Telegram
                     {
                         'component': 'VRow',
@@ -1284,6 +1375,9 @@ class Enhanced115(_PluginBase):
             'tv_root_cid': '',
             'delete_after_upload': False,
             'scan_interval': 1800,
+            'strm_enabled': False,
+            'emby_local_path': '/Emby',
+            'strm_overwrite_mode': 'auto',
             'telegram_enabled': False,
             'telegram_bot_token': '',
             'telegram_chat_id': ''
@@ -1312,7 +1406,7 @@ class Enhanced115(_PluginBase):
             f"队列：{self._stats['queue_size']}"
         )
         
-        return [
+        page_content = [
             {
                 'component': 'VRow',
                 'content': [
@@ -1355,10 +1449,97 @@ class Enhanced115(_PluginBase):
                 ]
             }
         ]
+        
+        # 如果启用STRM，添加全量同步按钮
+        if self._strm_enabled:
+            page_content.append({
+                'component': 'VRow',
+                'content': [{
+                    'component': 'VCol',
+                    'props': {'cols': 12},
+                    'content': [{
+                        'component': 'VCard',
+                        'props': {'variant': 'tonal'},
+                        'content': [
+                            {
+                                'component': 'VCardTitle',
+                                'props': {'text': 'STRM管理'}
+                            },
+                            {
+                                'component': 'VCardText',
+                                'props': {
+                                    'text': 'STRM文件映射115网盘文件，支持洗版自动管理'
+                                }
+                            },
+                            {
+                                'component': 'VCardActions',
+                                'content': [{
+                                    'component': 'VBtn',
+                                    'props': {
+                                        'text': '全量同步115到STRM',
+                                        'color': 'primary',
+                                        'variant': 'elevated'
+                                    },
+                                    'events': {
+                                        'click': {
+                                            'api': 'plugin/Enhanced115/strm_full_sync',
+                                            'method': 'post'
+                                        }
+                                    }
+                                }]
+                            }
+                        ]
+                    }]
+                }]
+            })
+        
+        return page_content
 
     def get_api(self) -> List[Dict[str, Any]]:
         """注册插件API"""
-        return []
+        return [{
+            "path": "/strm_full_sync",
+            "endpoint": self.strm_full_sync,
+            "methods": ["POST"],
+            "summary": "全量同步115到STRM",
+            "description": "扫描115指定目录，生成本地strm映射文件"
+        }]
+    
+    def strm_full_sync(self, root_cid: str = None) -> dict:
+        """
+        全量同步API接口
+        
+        :param root_cid: 115根目录CID（可选，默认使用tv_root_cid）
+        :return: 同步结果
+        """
+        if not self._strm_enabled:
+            return {"success": False, "message": "STRM功能未启用"}
+        
+        if not self._strm_manager:
+            return {"success": False, "message": "STRM管理器未初始化"}
+        
+        # 如果没有指定root_cid，使用配置的tv_root_cid
+        if not root_cid:
+            root_cid = self._tv_root_cid
+        
+        if not root_cid:
+            return {"success": False, "message": "未配置根目录CID"}
+        
+        try:
+            stats = self._strm_manager.full_sync(
+                root_cid=root_cid,
+                target_dir=self._emby_local_path,
+                pan_media_dir="/Emby"
+            )
+            
+            return {
+                "success": True,
+                "message": "同步完成",
+                "stats": stats
+            }
+        except Exception as e:
+            logger.error(f"【Enhanced115】全量同步API调用失败：{e}")
+            return {"success": False, "message": str(e)}
 
     def get_service(self) -> List[Dict[str, Any]]:
         """
