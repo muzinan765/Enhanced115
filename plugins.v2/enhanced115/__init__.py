@@ -1385,30 +1385,31 @@ class Enhanced115(_PluginBase):
 
     def get_page(self) -> List[dict]:
         """拼装插件详情页面"""
-        # 获取所有待处理任务
-        pending_tasks = self._task_manager.get_all_pending_tasks() if self._task_manager else {}
-        
-        tasks_text = ""
-        for download_hash, task in pending_tasks.items():
-            tasks_text += (
-                f"{task['media_title']}：{task['actual_count']}/{task['expected_count']} "
-                f"[{task['share_mode']}]\\n"
+        try:
+            # 获取所有待处理任务
+            pending_tasks = self._task_manager.get_all_pending_tasks() if self._task_manager else {}
+            
+            tasks_text = ""
+            for download_hash, task in pending_tasks.items():
+                tasks_text += (
+                    f"{task['media_title']}：{task['actual_count']}/{task['expected_count']} "
+                    f"[{task['share_mode']}]\\n"
+                )
+            
+            if not tasks_text:
+                tasks_text = "无待处理任务"
+            
+            stats_text = (
+                f"总任务：{self._stats['total_tasks']}\\n"
+                f"已上传：{self._stats['uploaded']}\\n"
+                f"已分享：{self._stats['shared']}\\n"
+                f"失败：{self._stats['failed']}\\n"
+                f"队列：{self._stats['queue_size']}"
             )
-        
-        if not tasks_text:
-            tasks_text = "无待处理任务"
-        
-        stats_text = (
-            f"总任务：{self._stats['total_tasks']}\\n"
-            f"已上传：{self._stats['uploaded']}\\n"
-            f"已分享：{self._stats['shared']}\\n"
-            f"失败：{self._stats['failed']}\\n"
-            f"队列：{self._stats['queue_size']}"
-        )
-        
-        page_content = [
-            {
-                'component': 'VRow',
+            
+            page_content = [
+                {
+                    'component': 'VRow',
                 'content': [
                     {
                         'component': 'VCol',
@@ -1447,53 +1448,57 @@ class Enhanced115(_PluginBase):
                         }]
                     }
                 ]
-            }
-        ]
-        
-        # 如果启用STRM，添加全量同步按钮
-        if self._strm_enabled:
-            page_content.append({
-                'component': 'VRow',
-                'content': [{
-                    'component': 'VCol',
-                    'props': {'cols': 12},
+                }
+            ]
+            
+            # 如果启用STRM，添加全量同步按钮
+            if self._strm_enabled:
+                page_content.append({
+                    'component': 'VRow',
                     'content': [{
-                        'component': 'VCard',
-                        'props': {'variant': 'tonal'},
-                        'content': [
-                            {
-                                'component': 'VCardTitle',
-                                'props': {'text': 'STRM管理'}
-                            },
-                            {
-                                'component': 'VCardText',
-                                'props': {
-                                    'text': 'STRM文件映射115网盘文件，支持洗版自动管理'
-                                }
-                            },
-                            {
-                                'component': 'VCardActions',
-                                'content': [{
-                                    'component': 'VBtn',
+                        'component': 'VCol',
+                        'props': {'cols': 12},
+                        'content': [{
+                            'component': 'VCard',
+                            'props': {'variant': 'tonal'},
+                            'content': [
+                                {
+                                    'component': 'VCardTitle',
+                                    'props': {'text': 'STRM管理'}
+                                },
+                                {
+                                    'component': 'VCardText',
                                     'props': {
-                                        'text': '全量同步115到STRM',
-                                        'color': 'primary',
-                                        'variant': 'elevated'
-                                    },
-                                    'events': {
-                                        'click': {
-                                            'api': 'plugin/Enhanced115/strm_full_sync',
-                                            'method': 'post'
-                                        }
+                                        'text': 'STRM文件映射115网盘文件，支持洗版自动管理'
                                     }
-                                }]
-                            }
-                        ]
+                                },
+                                {
+                                    'component': 'VCardActions',
+                                    'content': [{
+                                        'component': 'VBtn',
+                                        'props': {
+                                            'text': '全量同步115到STRM',
+                                            'color': 'primary',
+                                            'variant': 'elevated'
+                                        },
+                                        'events': {
+                                            'click': {
+                                                'api': 'plugin/Enhanced115/strm_full_sync',
+                                                'method': 'post'
+                                            }
+                                        }
+                                    }]
+                                }
+                            ]
+                        }]
                     }]
-                }]
-            })
-        
-        return page_content
+                })
+            
+            return page_content
+            
+        except Exception as e:
+            logger.error(f"【Enhanced115】构建详情页面失败：{e}")
+            return []
 
     def get_api(self) -> List[Dict[str, Any]]:
         """注册插件API"""
