@@ -75,9 +75,11 @@ class TelegramNotifier:
                 dh_record = result.fetchone()
                 
                 if not dh_record or not dh_record[0]:
+                    logger.warning(f"【Enhanced115】未找到torrent_name，hash={download_hash[:8]}...")
                     return context
                 
                 torrent_name = dh_record[0]
+                logger.debug(f"【Enhanced115】torrent_name={torrent_name}")
                 
                 # 查找message（参考my_115_app的SQL逻辑）
                 # 注意：只获取title和text，不要image（message的image是背景图）
@@ -89,6 +91,10 @@ class TelegramNotifier:
                 """)
                 result = session.execute(sql_find_message, {'torrent_name': torrent_name})
                 msg_record = result.fetchone()
+                
+                if not msg_record:
+                    logger.warning(f"【Enhanced115】未找到message记录，torrent_name={torrent_name}")
+                    return context
                 
                 if msg_record:
                     # 解析message内容（参考my_115_app的业务逻辑）
