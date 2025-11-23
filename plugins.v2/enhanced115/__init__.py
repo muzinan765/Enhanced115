@@ -1462,9 +1462,9 @@ class Enhanced115(_PluginBase):
                                 'props': {
                                     'color': 'primary',
                                     'variant': 'elevated',
-                                    'size': 'large'
+                                    'size': 'large',
+                                    'text': '全量同步115到STRM'
                                 },
-                                'content': '全量同步115到STRM',
                                 'events': {
                                     'click': {
                                         'api': 'plugin/Enhanced115/strm_full_sync',
@@ -1491,7 +1491,8 @@ class Enhanced115(_PluginBase):
             "endpoint": self.strm_full_sync,
             "methods": ["POST"],
             "summary": "全量同步115到STRM",
-            "description": "扫描115指定目录，生成本地strm映射文件"
+            "description": "扫描115指定目录，生成本地strm映射文件",
+            "auth": "bear"
         }]
     
     def strm_full_sync(self, root_cid: str = None) -> dict:
