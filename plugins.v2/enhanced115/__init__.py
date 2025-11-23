@@ -1386,6 +1386,7 @@ class Enhanced115(_PluginBase):
     def get_page(self) -> List[dict]:
         """拼装插件详情页面"""
         logger.info("【Enhanced115】get_page被调用")
+        
         try:
             # 获取所有待处理任务
             pending_tasks = self._task_manager.get_all_pending_tasks() if self._task_manager else {}
@@ -1496,6 +1497,8 @@ class Enhanced115(_PluginBase):
                     }]
                 })
             
+            logger.info(f"【Enhanced115】page_content长度：{len(page_content)}")
+            logger.info(f"【Enhanced115】page_content类型：{type(page_content)}")
             return page_content
             
         except Exception as e:
