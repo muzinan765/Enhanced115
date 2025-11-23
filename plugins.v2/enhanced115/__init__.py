@@ -79,6 +79,7 @@ class Enhanced115(_PluginBase):
         
         # 删除配置
         self._delete_after_upload = False  # 上传后删除本地文件
+        self._scan_interval = 1800  # 扫描间隔（秒）
         
         # 处理器
         self._p115_client = None
@@ -133,6 +134,7 @@ class Enhanced115(_PluginBase):
         
         # 删除配置
         self._delete_after_upload = config.get("delete_after_upload", False)
+        self._scan_interval = int(config.get("scan_interval", 1800))
         
         # 停止旧服务
         self.stop_service()
@@ -756,8 +758,29 @@ class Enhanced115(_PluginBase):
         :param file_path: 本地文件路径
         """
         try:
-            # 获取任务信息
+            from app.db.transferhistory_oper import TransferHistoryOper
+            
+            # 获取download_hash（可能需要从旧记录恢复）
             download_hash = record.download_hash
+            
+            # 如果download_hash为null，用src_fileitem.path查询旧记录
+            if not download_hash:
+                src_fileitem = record.src_fileitem
+                if src_fileitem and isinstance(src_fileitem, dict):
+                    original_src_path = src_fileitem.get('path')
+                    
+                    if original_src_path:
+                        transferhis = TransferHistoryOper()
+                        old_record = transferhis.get_by_src(original_src_path, storage='local')
+                        
+                        if old_record and old_record.download_hash:
+                            download_hash = old_record.download_hash
+                            logger.info(
+                                f"【Enhanced115】扫描时通过src_fileitem恢复download_hash："
+                                f"{download_hash[:8]}...，文件：{file_path.name}"
+                            )
+            
+            # 获取任务信息
             task = self._task_manager.get_task(download_hash)
             
             if not task:
@@ -1109,18 +1132,33 @@ class Enhanced115(_PluginBase):
                     # 删除配置
                     {
                         'component': 'VRow',
-                        'content': [{
-                            'component': 'VCol',
-                            'props': {'cols': 12, 'md': 6},
-                            'content': [{
-                                'component': 'VSwitch',
-                                'props': {
-                                    'model': 'delete_after_upload',
-                                    'label': '上传后删除本地文件',
-                                    'hint': '开启后会删除/media中已上传的文件，节省空间'
-                                }
-                            }]
-                        }]
+                        'content': [
+                            {
+                                'component': 'VCol',
+                                'props': {'cols': 12, 'md': 6},
+                                'content': [{
+                                    'component': 'VSwitch',
+                                    'props': {
+                                        'model': 'delete_after_upload',
+                                        'label': '上传后删除本地文件',
+                                        'hint': '开启后会删除/media中已上传的文件，节省空间'
+                                    }
+                                }]
+                            },
+                            {
+                                'component': 'VCol',
+                                'props': {'cols': 12, 'md': 6},
+                                'content': [{
+                                    'component': 'VTextField',
+                                    'props': {
+                                        'model': 'scan_interval',
+                                        'label': '扫描间隔(秒)',
+                                        'type': 'number',
+                                        'hint': '扫描清理文件的间隔时间，默认1800秒（30分钟）'
+                                    }
+                                }]
+                            }
+                        ]
                     },
                     # Telegram
                     {
@@ -1181,6 +1219,7 @@ class Enhanced115(_PluginBase):
             'movie_root_cid': '',
             'tv_root_cid': '',
             'delete_after_upload': False,
+            'scan_interval': 1800,
             'telegram_enabled': False,
             'telegram_bot_token': '',
             'telegram_chat_id': ''
@@ -1283,7 +1322,7 @@ class Enhanced115(_PluginBase):
                 "trigger": "interval",
                 "func": self._scan_and_clean_uploaded_files,
                 "kwargs": {
-                    "seconds": 1800  # 每半小时执行一次
+                    "seconds": self._scan_interval  # 使用配置的间隔时间
                 }
             })
         
