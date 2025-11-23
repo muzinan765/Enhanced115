@@ -384,7 +384,12 @@ class Enhanced115(_PluginBase):
         
         # 2. 更新数据库（local→u115）
         # ⚠️ 关键：传入src_path，只更新当前文件的记录
-        src_path = upload_task['fileitem'].path
+        fileitem = upload_task['fileitem']
+        # fileitem可能是dict或对象，统一处理
+        if isinstance(fileitem, dict):
+            src_path = fileitem['path']
+        else:
+            src_path = fileitem.path
         db_updated = DatabaseHandler.update_transfer_record(
             src_path,
             download_hash,
@@ -1235,7 +1240,7 @@ class Enhanced115(_PluginBase):
                 "trigger": "interval",
                 "func": self._scan_and_clean_uploaded_files,
                 "kwargs": {
-                    "seconds": 3600  # 每小时执行一次
+                    "seconds": 1800  # 每半小时执行一次
                 }
             })
         
