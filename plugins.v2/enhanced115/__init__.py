@@ -762,23 +762,31 @@ class Enhanced115(_PluginBase):
             
             # 获取download_hash（可能需要从旧记录恢复）
             download_hash = record.download_hash
+            logger.debug(f"【Enhanced115】扫描调试1 | record.download_hash={download_hash}")
             
             # 如果download_hash为null，用src_fileitem.path查询旧记录
             if not download_hash:
                 src_fileitem = record.src_fileitem
+                logger.debug(f"【Enhanced115】扫描调试2 | src_fileitem类型={type(src_fileitem)}, 存在={src_fileitem is not None}")
+                
                 if src_fileitem and isinstance(src_fileitem, dict):
                     original_src_path = src_fileitem.get('path')
+                    logger.debug(f"【Enhanced115】扫描调试3 | original_src_path={original_src_path}")
                     
                     if original_src_path:
                         transferhis = TransferHistoryOper()
                         old_record = transferhis.get_by_src(original_src_path, storage='local')
+                        logger.debug(f"【Enhanced115】扫描调试4 | old_record存在={old_record is not None}")
                         
-                        if old_record and old_record.download_hash:
-                            download_hash = old_record.download_hash
-                            logger.info(
-                                f"【Enhanced115】扫描时通过src_fileitem恢复download_hash："
-                                f"{download_hash[:8]}...，文件：{file_path.name}"
-                            )
+                        if old_record:
+                            logger.debug(f"【Enhanced115】扫描调试5 | old_record.download_hash={old_record.download_hash}")
+                            
+                            if old_record.download_hash:
+                                download_hash = old_record.download_hash
+                                logger.info(
+                                    f"【Enhanced115】扫描时通过src_fileitem恢复download_hash："
+                                    f"{download_hash[:8]}...，文件：{file_path.name}"
+                                )
             
             # 获取任务信息
             task = self._task_manager.get_task(download_hash)
