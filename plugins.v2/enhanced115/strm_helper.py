@@ -8,6 +8,12 @@ from typing import Optional, List, Tuple
 
 from app.log import logger
 
+VIDEO_EXTS = {'.mkv', '.mp4', '.avi', '.ts', '.m2ts', '.iso'}
+SUBTITLE_EXTS = {
+    '.ass', '.srt', '.ssa', '.sub', '.vtt', '.idx', '.sup',
+    '.dfxp', '.lrc', '.smi', '.sami'
+}
+
 
 class StrmHelper:
     """STRM文件管理类"""
@@ -56,10 +62,11 @@ class StrmHelper:
             pickcode = None
             
             for line in lines:
-                if line.startswith('fileid='):
-                    fileid = line.split('=', 1)[1].strip()
-                elif line.startswith('pickcode='):
-                    pickcode = line.split('=', 1)[1].strip()
+                normalized = line.lstrip(';# ').strip()
+                if normalized.startswith('fileid='):
+                    fileid = normalized.split('=', 1)[1].strip()
+                elif normalized.startswith('pickcode='):
+                    pickcode = normalized.split('=', 1)[1].strip()
             
             if fileid:
                 return fileid, pickcode
@@ -96,28 +103,35 @@ class StrmHelper:
         if not strm_dir.exists():
             return []
         
-        old_strms = []
-        video_exts = {'.mkv', '.mp4', '.avi', '.ts', '.m2ts', '.iso'}
+        old_files: List[Path] = []
         
         try:
-            for strm_file in strm_dir.glob('*.strm'):
-                # 剧集：匹配相同集数
-                if not is_movie and episode_id:
-                    if episode_id in strm_file.name.upper():
-                        # 检查是否是视频strm（不是字幕strm）
-                        # 通过去掉.strm后的扩展名判断
-                        name_without_strm = strm_file.name[:-5]  # 去掉.strm
-                        if Path(name_without_strm).suffix.lower() in video_exts:
-                            old_strms.append(strm_file)
-                
-                # 电影：所有视频strm
-                elif is_movie:
-                    name_without_strm = strm_file.name[:-5]
-                    if Path(name_without_strm).suffix.lower() in video_exts:
-                        old_strms.append(strm_file)
+            for item in strm_dir.iterdir():
+                try:
+                    suffix = item.suffix.lower()
+                    name_upper = item.name.upper()
+                    
+                    if suffix == '.strm':
+                        name_without_strm = item.name[:-5]
+                        video_suffix = Path(name_without_strm).suffix.lower()
+                        if video_suffix not in VIDEO_EXTS:
+                            continue
+                        
+                        if is_movie:
+                            old_files.append(item)
+                        elif episode_id and episode_id in name_upper:
+                            old_files.append(item)
+                    
+                    elif suffix in SUBTITLE_EXTS:
+                        if is_movie:
+                            old_files.append(item)
+                        elif episode_id and episode_id in name_upper:
+                            old_files.append(item)
+                except Exception as inner_err:
+                    logger.debug(f"【Enhanced115】扫描目录时跳过文件：{item}，原因：{inner_err}")
+                    continue
             
-            return old_strms
-            
+            return old_files
         except Exception as e:
             logger.error(f"【Enhanced115】查找旧strm失败：{strm_dir}，错误：{e}")
             return []
@@ -164,17 +178,36 @@ class StrmHelper:
         return deleted_count
     
     @staticmethod
-    def generate_empty_subtitle(subtitle_path: Path) -> bool:
+    def generate_subtitle_placeholder(subtitle_path: Path, fileid: str, pickcode: str) -> bool:
         """
         生成空字幕文件（占位）
         
         :param subtitle_path: 字幕文件路径
+        :param fileid: 115文件ID
+        :param pickcode: 115提取码
         :return: 是否成功
         """
         try:
             subtitle_path.parent.mkdir(parents=True, exist_ok=True)
-            subtitle_path.touch()
-            logger.debug(f"【Enhanced115】已生成空字幕文件：{subtitle_path.name}")
+            content = (
+                "[Script Info]\n"
+                "Title=Enhanced115 Placeholder\n"
+                "ScriptType=v4.00+\n"
+                f"fileid={fileid}\n"
+                f"pickcode={pickcode}\n"
+                "\n[V4+ Styles]\n"
+                "Format=Name,Fontname,Fontsize,PrimaryColour,"
+                "SecondaryColour,OutlineColour,BackColour,Bold,Italic,"
+                "Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,"
+                "Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding\n"
+                "Style: Default,Microsoft YaHei,48,&H00FFFFFF,&H000000FF,&H00000000,"
+                "&H64000000,-1,0,0,0,100,100,0,0,1,1,0,2,10,10,10,1\n"
+                "\n[Events]\n"
+                "Format=Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text\n"
+                "Dialogue: 0,0:00:00.00,0:00:00.01,Default,,0,0,0,,Enhanced115 Placeholder Subtitle\n"
+            )
+            subtitle_path.write_text(content, encoding='utf-8')
+            logger.debug(f"【Enhanced115】已生成占位字幕文件：{subtitle_path.name}")
             return True
         except Exception as e:
             logger.error(f"【Enhanced115】生成空字幕失败：{subtitle_path}，{e}")

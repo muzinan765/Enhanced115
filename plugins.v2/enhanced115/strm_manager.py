@@ -31,7 +31,7 @@ from time import perf_counter
 
 from app.log import logger
 
-from .strm_helper import StrmHelper
+from .strm_helper import StrmHelper, SUBTITLE_EXTS
 
 
 class StrmManager:
@@ -70,24 +70,26 @@ class StrmManager:
                 logger.warning(f"【Enhanced115】fileid为空，无法生成strm")
                 return False
             
-            # 计算strm路径（在/Emby目录）
-            # remote_path: /Emby/电视剧/xxx/Season 1/E06.mkv
-            # strm_path: /Emby/电视剧/xxx/Season 1/E06.mkv.strm
             remote_path_obj = Path(remote_path)
             
             # 构建本地/Emby的完整路径
-            # 去掉remote_path的/Emby前缀，加上本地emby_local_path
             relative_path = str(remote_path_obj).lstrip('/')
             if relative_path.startswith('Emby/'):
                 relative_path = relative_path[5:]  # 去掉"Emby/"
             
-            strm_path = self.emby_local_path / relative_path
-            strm_path = strm_path.with_suffix(strm_path.suffix + '.strm')
+            target_path = self.emby_local_path / relative_path
             
-            # 生成strm文件
-            success = self.helper.generate_strm(strm_path, fileid, pickcode)
+            # 字幕：生成真实扩展名的占位文件
+            if local_path.suffix.lower() in SUBTITLE_EXTS:
+                return self.helper.generate_subtitle_placeholder(
+                    target_path,
+                    fileid,
+                    pickcode
+                )
             
-            return success
+            # 视频：生成strm文件
+            strm_path = target_path.with_suffix(target_path.suffix + '.strm')
+            return self.helper.generate_strm(strm_path, fileid, pickcode)
             
         except Exception as e:
             logger.error(f"【Enhanced115】处理上传后strm生成失败：{e}")
@@ -247,7 +249,32 @@ class StrmManager:
                             continue
                         
                         # 计算strm路径
-                        file_path = target_dir_path / Path(item_path).relative_to(pan_media_dir)
+                        path_obj = Path(item_path)
+                        file_path = target_dir_path / path_obj.relative_to(pan_media_dir)
+                        suffix_lower = path_obj.suffix.lower()
+                        
+                        # 字幕文件：直接生成占位字幕
+                        if suffix_lower in SUBTITLE_EXTS:
+                            try:
+                                if file_path.exists():
+                                    if self.overwrite_mode == 'never':
+                                        stats['skipped'] += 1
+                                        continue
+                                    elif self.overwrite_mode == 'auto':
+                                        existing_content = file_path.read_text(encoding='utf-8').strip()
+                                        if 'fileid=' in existing_content:
+                                            stats['skipped'] += 1
+                                            continue
+                                if self.helper.generate_subtitle_placeholder(file_path, fileid, pickcode):
+                                    stats['success'] += 1
+                                else:
+                                    stats['failed'] += 1
+                                continue
+                            except Exception as sub_err:
+                                logger.error(f"【Enhanced115】生成字幕占位失败：{file_path}，{sub_err}")
+                                stats['failed'] += 1
+                                continue
+                        
                         strm_path = file_path.with_name(file_path.name + '.strm')
                         
                         # 覆盖模式检查
