@@ -91,10 +91,27 @@ class Upload115Handler:
                 logger.info(f"【Enhanced115】{filename} 上传完成")
                 # 从上传完成响应中提取文件信息
                 data = result.get('data', {})
+                
+                # 提取pickcode（分片上传时在callback中）
+                pickcode = data.get('pickcode', '')
+                if not pickcode:
+                    # 分片上传时，pickcode在callback的callback_var中
+                    # 根据p115oss源码（451行）：callback_var["x:pick_code"]
+                    try:
+                        import json
+                        callback_data = uploader.callback
+                        if isinstance(callback_data, dict) and 'callback_var' in callback_data:
+                            callback_var_str = callback_data['callback_var']
+                            callback_var = json.loads(callback_var_str)
+                            pickcode = callback_var.get('x:pick_code', '')
+                            logger.debug(f"【Enhanced115】从callback提取pickcode：{pickcode}")
+                    except Exception as pick_err:
+                        logger.warning(f"【Enhanced115】提取pickcode失败：{pick_err}")
+                
                 file_info = {
                     'storage': 'u115',
-                    'fileid': str(data.get('file_id', '')),  # 已验证：file_id字段是正确的
-                    'pickcode': data.get('pickcode', ''),
+                    'fileid': str(data.get('file_id', '')),
+                    'pickcode': pickcode,
                     'path': remote_path,
                     'name': filename,
                     'size': local_path.stat().st_size,
