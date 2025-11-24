@@ -1423,110 +1423,57 @@ class Enhanced115(_PluginBase):
             pending_tasks = self._task_manager.get_all_pending_tasks() if self._task_manager else {}
             logger.info(f"【Enhanced115】pending_tasks数量：{len(pending_tasks)}")
             
-            stats_cards = [
-                {'label': '总任务', 'value': self._stats['total_tasks'], 'color': 'primary'},
-                {'label': '已上传', 'value': self._stats['uploaded'], 'color': 'success'},
-                {'label': '已分享', 'value': self._stats['shared'], 'color': 'info'},
-                {'label': '失败', 'value': self._stats['failed'], 'color': 'error'},
-                {'label': '上传队列', 'value': self._stats['queue_size'], 'color': 'warning'}
+            # 兼容性优先：使用简洁的文本卡片
+            task_lines = [
+                f"{task['media_title']}：{task['actual_count']}/{task['expected_count']} [{task['share_mode']}]"
+                for task in pending_tasks.values()
             ]
+            tasks_text = "\\n".join(task_lines) if task_lines else "无待处理任务"
             
-            stats_row = {
-                'component': 'VRow',
-                'props': {'class': 'gy-2'},
-                'content': [{
-                    'component': 'VCol',
-                    'props': {'cols': 12, 'sm': 6, 'md': 3, 'lg': 2},
-                    'content': [{
-                        'component': 'VCard',
-                        'props': {'variant': 'tonal', 'color': card['color']},
-                        'content': [{
-                            'component': 'VCardText',
-                            'props': {'class': 'py-4 text-center'},
-                            'content': [
-                                {
-                                    'component': 'div',
-                                    'props': {'class': 'text-h5 font-weight-bold'},
-                                    'content': str(card['value'])
-                                },
-                                {
-                                    'component': 'div',
-                                    'props': {'class': 'text-caption text-medium-emphasis'},
-                                    'content': card['label']
-                                }
-                            ]
-                        }]
-                    }]
-                } for card in stats_cards]
-            }
+            stats_text = "\\n".join([
+                f"总任务：{self._stats['total_tasks']}",
+                f"已上传：{self._stats['uploaded']}",
+                f"已分享：{self._stats['shared']}",
+                f"失败：{self._stats['failed']}",
+                f"队列：{self._stats['queue_size']}"
+            ])
             
-            # 构建待处理任务列表
-            task_list_items = []
-            for task in pending_tasks.values():
-                share_attempts = task.get('share_attempts', 0)
-                last_share_time = task.get('last_share_time')
-                last_share_display = time.strftime("%m-%d %H:%M", time.localtime(last_share_time)) if last_share_time else '--'
-                task_list_items.append({
-                    'component': 'VListItem',
-                    'props': {'lines': 'three'},
-                    'content': [
-                        {
-                            'component': 'VListItemTitle',
-                            'content': task.get('media_title', '未知')
-                        },
-                        {
-                            'component': 'VListItemSubtitle',
-                            'content': f"进度：{task.get('actual_count', 0)}/{task.get('expected_count', 0)}"
-                        },
-                        {
-                            'component': 'VListItemSubtitle',
-                            'content': (
-                                f"模式：{task.get('share_mode', '未知')} ｜ 状态：{task.get('status', 'pending')} ｜ "
-                                f"分享次数：{share_attempts} ｜ 最近分享：{last_share_display}"
-                            )
-                        }
-                    ]
-                })
-            
-            tasks_table = {
-                'component': 'VCard',
-                'props': {'variant': 'flat'},
-                'content': [
-                    {
-                        'component': 'VCardTitle',
-                        'props': {'text': f"待处理任务（{len(task_list_items)}）"}
-                    },
-                    {
-                        'component': 'VCardText',
-                        'content': [{
-                            'component': 'VAlert',
-                            'props': {
-                                'type': 'info',
-                                'variant': 'tonal',
-                                'text': '当前无需处理任务',
-                                'class': 'my-4'
-                            }
-                        }] if not task_list_items else [{
-                            'component': 'VList',
-                            'props': {'density': 'comfortable'},
-                            'content': task_list_items
-                        }]
-                    }
-                ]
-            }
-            
-            page_content = [{
-                'component': 'VContainer',
-                'props': {'fluid': True, 'class': 'pa-0'},
-                'content': [stats_row, {
+            container_content = [
+                {
                     'component': 'VRow',
                     'content': [{
                         'component': 'VCol',
                         'props': {'cols': 12},
-                        'content': [tasks_table]
+                        'content': [{
+                            'component': 'VAlert',
+                            'props': {
+                                'color': 'primary',
+                                'variant': 'tonal',
+                                'title': '任务统计',
+                                'text': stats_text,
+                                'class': 'text-pre-wrap text-body-2'
+                            }
+                        }]
                     }]
-                }]
-            }]
+                },
+                {
+                    'component': 'VRow',
+                    'content': [{
+                        'component': 'VCol',
+                        'props': {'cols': 12},
+                        'content': [{
+                            'component': 'VAlert',
+                            'props': {
+                                'color': 'secondary',
+                                'variant': 'tonal',
+                                'title': '待处理任务',
+                                'text': tasks_text,
+                                'class': 'text-pre-wrap text-body-2'
+                            }
+                        }]
+                    }]
+                }
+            ]
             
             # 如果启用STRM，添加全量同步按钮
             logger.info(f"【Enhanced115】_strm_enabled={self._strm_enabled}")
@@ -1586,7 +1533,7 @@ class Enhanced115(_PluginBase):
                     ]
                 }
                 
-                page_content.append({
+                container_content.append({
                     'component': 'VRow',
                     'content': [{
                         'component': 'VCol',
@@ -1594,6 +1541,12 @@ class Enhanced115(_PluginBase):
                         'content': [strm_card]
                     }]
                 })
+            
+            page_content = [{
+                'component': 'VContainer',
+                'props': {'fluid': True},
+                'content': container_content
+            }]
             
             logger.info(f"【Enhanced115】page_content长度：{len(page_content)}")
             logger.info(f"【Enhanced115】page_content类型：{type(page_content)}")
