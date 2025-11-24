@@ -53,7 +53,14 @@ class TaskManager:
             'is_movie': is_movie,
             'season': season,
             'creation_time': int(time.time()),
-            'status': 'pending'
+            'status': 'pending',
+            'share_attempts': 0,
+            'last_share_time': None,
+            'last_fail_reason': '',
+            'completed_files': [],
+            'pending_cleanup': [],
+            'notification_sent': False,
+            'share_history': []
         }
         
         # 保存任务
@@ -80,11 +87,15 @@ class TaskManager:
             task.update(updates)
             self.data_ops.save_data(task_key, task)
     
-    def increment_actual_count(self, download_hash: str):
-        """增加实际完成数量"""
+    def increment_actual_count(self, download_hash: str, file_path: str = None):
+        """增加实际完成数量，并可记录完成的文件"""
         task = self.get_task(download_hash)
         if task:
             task['actual_count'] = task.get('actual_count', 0) + 1
+            if file_path:
+                completed = set(task.get('completed_files') or [])
+                completed.add(file_path)
+                task['completed_files'] = list(completed)
             task_key = self._get_task_key(download_hash)
             self.data_ops.save_data(task_key, task)
             
@@ -92,6 +103,46 @@ class TaskManager:
                 f"【Enhanced115】任务进度更新：{task['media_title']}，"
                 f"{task['actual_count']}/{task['expected_count']}"
             )
+    
+    def append_cleanup_targets(self, download_hash: str, paths: list):
+        """记录待清理的旧文件（STRM/字幕）"""
+        if not paths:
+            return
+        task = self.get_task(download_hash)
+        if not task:
+            return
+        existing = set(task.get('pending_cleanup') or [])
+        for p in paths:
+            if p:
+                existing.add(str(p))
+        task['pending_cleanup'] = list(existing)
+        self.update_task(download_hash, {'pending_cleanup': task['pending_cleanup']})
+    
+    def clear_cleanup_targets(self, download_hash: str):
+        """清空待清理列表"""
+        self.update_task(download_hash, {'pending_cleanup': []})
+    
+    def record_share_attempt(self, download_hash: str, success: bool, fail_reason: str = ''):
+        """记录分享结果"""
+        task = self.get_task(download_hash)
+        if not task:
+            return
+        task.setdefault('share_history', [])
+        history = task['share_history']
+        history.append({
+            'time': int(time.time()),
+            'success': success,
+            'reason': fail_reason
+        })
+        updates = {
+            'share_attempts': task.get('share_attempts', 0) + 1,
+            'last_share_time': int(time.time()),
+            'last_fail_reason': '' if success else fail_reason,
+            'share_history': history
+        }
+        if success:
+            updates['status'] = 'shared'
+        self.update_task(download_hash, updates)
     
     def is_task_complete(self, download_hash: str) -> bool:
         """检查任务是否完成"""

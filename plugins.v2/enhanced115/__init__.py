@@ -18,6 +18,7 @@ import threading
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional, List, Dict, Any, Tuple
+import time
 
 from app.core.event import eventmanager, Event
 from app.log import logger
@@ -454,7 +455,11 @@ class Enhanced115(_PluginBase):
         else:
             src_path = fileitem.path
         
-        # 1. 检查是否是替换操作（洗版）
+        # 1. 记录已完成文件
+        if self._task_manager:
+            self._task_manager.increment_actual_count(download_hash, str(local_path))
+        
+        # 2. 检查是否是替换操作（洗版）
         # 如果启用strm，使用strm方式检测；否则使用数据库方式
         old_version_count = 0
         if self._strm_enabled and self._strm_manager:
@@ -467,7 +472,7 @@ class Enhanced115(_PluginBase):
             if old_file_id:
                 logger.info(f"【Enhanced115】检测到替换操作，已删除115上的旧文件：{filename}")
         
-        # 2. 上传到115
+        # 3. 上传到115
         success, file_info = self._uploader.upload_file(local_path, remote_path, filename)
         
         if not success:
@@ -475,7 +480,7 @@ class Enhanced115(_PluginBase):
             self._stats['failed'] += 1
             return
         
-        # 2. 更新数据库（local→u115）
+        # 4. 更新数据库（local→u115）
         # ⚠️ 关键：传入src_path，只更新当前文件的记录
         # src_path已在上面提取
         db_updated = DatabaseHandler.update_transfer_record(
@@ -513,7 +518,7 @@ class Enhanced115(_PluginBase):
             logger.warning(f"【Enhanced115】数据库更新失败：{filename}")
             return
         
-        # 3. 查询数据库真实完成数量（不用内存计数）
+        # 5. 查询数据库真实完成数量（不用内存计数）
         actual_count = self._count_completed_files(download_hash)
         expected_count = task_info.get('expected_count', 0)
         
@@ -522,7 +527,7 @@ class Enhanced115(_PluginBase):
             f"已完成={actual_count}/{expected_count}"
         )
         
-        # 4. 检查任务是否完成（基于数据库真实count）
+        # 6. 检查任务是否完成（基于数据库真实count）
         if actual_count >= expected_count:
             logger.info(
                 f"【Enhanced115】任务完成：{task_info['media_title']}，"
@@ -543,7 +548,13 @@ class Enhanced115(_PluginBase):
                     )
                     return
                 
-                self._task_manager.update_task(download_hash, {'status': 'sharing'})
+                self._task_manager.update_task(
+                    download_hash,
+                    {
+                        'status': 'sharing',
+                        'last_share_request': int(time.time())
+                    }
+                )
                 
                 share_result = self._sharer.create_share(
                     current_task,
@@ -553,11 +564,12 @@ class Enhanced115(_PluginBase):
                 
                 if share_result:
                     self._stats['shared'] += 1
+                    self._task_manager.record_share_attempt(download_hash, True)
                     
                     # 6. Telegram通知（增强版：传递download_hash获取文件大小）
                     if self._telegram_enabled and self._telegram:
                         self._telegram.send_share_notification(
-                            task_info,
+                            current_task,
                             share_result,
                             download_hash
                         )
@@ -568,6 +580,11 @@ class Enhanced115(_PluginBase):
                 else:
                     # 分享失败，保留任务，等待下次重试
                     logger.warning(f"【Enhanced115】分享失败，任务保留：{task_info['media_title']}")
+                    self._task_manager.record_share_attempt(
+                        download_hash,
+                        False,
+                        fail_reason="share_failed"
+                    )
                     self._task_manager.update_task(download_hash, {'status': 'pending'})
             else:
                 # 未启用分享，直接移除任务
