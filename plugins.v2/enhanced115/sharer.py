@@ -72,16 +72,16 @@ class Share115Handler:
                 logger.error("【Enhanced115】未找到115文件路径")
                 return None
             
-            # 提取文件夹名（往上两层，因为dest_path是文件路径）
-            # dest_path: /Emby/电视剧/灼灼韶华 (2025)/Season 1/xxx.mkv
-            # parent: /Emby/电视剧/灼灼韶华 (2025)/Season 1
-            # parent.parent: /Emby/电视剧/灼灼韶华 (2025)
-            # parent.parent.name: "灼灼韶华 (2025)"
-            folder_name = Path(dest_path).parent.parent.name
-            
             # 确定根目录CID
             is_movie = task_info.get('is_movie', False)
             root_cid = self.movie_root_cid if is_movie else self.tv_root_cid
+            
+            # 提取分享目录
+            dest_path_obj = Path(dest_path)
+            folder_path = dest_path_obj.parent
+            if not is_movie and folder_path.parent:
+                folder_path = folder_path.parent
+            folder_name = folder_path.name
             
             if not root_cid:
                 logger.warning("【Enhanced115】未配置根目录CID")
