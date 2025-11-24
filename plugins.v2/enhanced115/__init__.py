@@ -328,7 +328,6 @@ class Enhanced115(_PluginBase):
                 try:
                     from app.db.transferhistory_oper import TransferHistoryOper
                     from app.db.downloadhistory_oper import DownloadHistoryOper
-                    from pathlib import Path
                     
                     transferhis = TransferHistoryOper()
                     # 用dest路径查询当前成功记录
@@ -532,8 +531,22 @@ class Enhanced115(_PluginBase):
             
             # 5. 创建分享
             if self._share_enabled and self._sharer:
+                current_task = self._task_manager.get_task(download_hash)
+                if not current_task:
+                    logger.warning(f"【Enhanced115】任务不存在，跳过分享：{download_hash}")
+                    return
+                
+                if current_task.get('status') != 'pending':
+                    logger.info(
+                        f"【Enhanced115】任务已进入{current_task.get('status')}状态，"
+                        f"跳过重复分享：{current_task.get('media_title')}"
+                    )
+                    return
+                
+                self._task_manager.update_task(download_hash, {'status': 'sharing'})
+                
                 share_result = self._sharer.create_share(
-                    task_info,
+                    current_task,
                     download_hash,
                     upload_task.get('mediainfo')
                 )
@@ -555,6 +568,7 @@ class Enhanced115(_PluginBase):
                 else:
                     # 分享失败，保留任务，等待下次重试
                     logger.warning(f"【Enhanced115】分享失败，任务保留：{task_info['media_title']}")
+                    self._task_manager.update_task(download_hash, {'status': 'pending'})
             else:
                 # 未启用分享，直接移除任务
                 self._task_manager.remove_task(download_hash)
