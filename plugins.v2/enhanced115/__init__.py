@@ -1717,9 +1717,10 @@ class Enhanced115(_PluginBase):
             self._stop_event.set()
             
             if self._upload_executor:
-                logger.info("【Enhanced115】正在停止上传线程，等待任务完成...")
-                # 等待线程完成（防止资源泄漏和重复上传）
-                self._upload_executor.shutdown(wait=True)
+                logger.info("【Enhanced115】正在停止...")
+                # 立即返回，不等待线程完成
+                # 旧线程会在后台继续运行，完成或中断的任务会在下次启动时恢复
+                self._upload_executor.shutdown(wait=False)
                 self._upload_executor = None
             
             # 清空队列

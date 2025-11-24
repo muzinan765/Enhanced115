@@ -182,22 +182,31 @@ class TaskManager:
     
     def clear_uploading_on_startup(self):
         """
-        程序启动时清空所有uploading状态（恢复中断任务）
+        程序启动时清空所有uploading状态
+        
+        简单粗暴的策略：
+        - 清空所有uploading状态
+        - 依赖扫描机制自动恢复未完成的任务
+        - 可能导致偶尔的重复上传（秒传很快，影响小）
         """
         all_tasks = self.get_all_pending_tasks()
         cleared_count = 0
+        
         for download_hash, task in all_tasks.items():
             uploading_files = task.get('uploading_files', [])
             if uploading_files:
                 logger.info(
-                    f"【Enhanced115】清理中断任务的uploading状态："
+                    f"【Enhanced115】清理uploading状态："
                     f"{task['media_title']}，{len(uploading_files)}个文件"
                 )
                 self.update_task(download_hash, {'uploading_files': []})
                 cleared_count += len(uploading_files)
         
         if cleared_count > 0:
-            logger.info(f"【Enhanced115】已清理{cleared_count}个中断任务文件")
+            logger.info(
+                f"【Enhanced115】已清理{cleared_count}个uploading状态，"
+                f"未完成的任务将在扫描时自动恢复"
+            )
     
     def append_cleanup_targets(self, download_hash: str, paths: list):
         """记录待清理的旧文件（STRM/字幕）"""
