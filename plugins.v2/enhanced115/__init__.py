@@ -1595,25 +1595,39 @@ class Enhanced115(_PluginBase):
         if not roots:
             return {"success": False, "message": "未配置根目录CID"}
         
-        try:
-            aggregated = {'total': 0, 'success': 0, 'failed': 0, 'skipped': 0}
-            for cid in roots:
+        aggregated = {'total': 0, 'success': 0, 'failed': 0, 'skipped': 0}
+        details = []
+        errors = []
+        
+        for cid in roots:
+            try:
                 stats = self._strm_manager.full_sync(
                     root_cid=cid,
                     target_dir=self._emby_local_path,
                     pan_media_dir="/Emby"
                 )
+                details.append({'cid': cid, 'stats': stats})
                 for key in aggregated:
                     aggregated[key] += stats.get(key, 0)
-            
-            return {
-                "success": True,
-                "message": "同步完成",
-                "stats": aggregated
-            }
-        except Exception as e:
-            logger.error(f"【Enhanced115】全量同步API调用失败：{e}")
-            return {"success": False, "message": str(e)}
+            except Exception as e:
+                logger.error(f"【Enhanced115】全量同步子任务失败，CID={cid}，错误：{e}")
+                errors.append({'cid': cid, 'error': str(e)})
+        
+        logger.info(
+            f"【Enhanced115】全量同步汇总 | 目录数={len(roots)} | "
+            f"总数={aggregated['total']} | 成功={aggregated['success']} | "
+            f"失败={aggregated['failed']} | 跳过={aggregated['skipped']}"
+        )
+        
+        success = not errors
+        message = "同步完成" if success else "部分目录同步失败"
+        return {
+            "success": success,
+            "message": message,
+            "stats": aggregated,
+            "details": details,
+            "errors": errors
+        }
 
     def get_service(self) -> List[Dict[str, Any]]:
         """
