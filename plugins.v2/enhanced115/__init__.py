@@ -1424,39 +1424,33 @@ class Enhanced115(_PluginBase):
             logger.info(f"【Enhanced115】pending_tasks数量：{len(pending_tasks)}")
             
             stats_cards = [
-                {'label': '总任务', 'value': self._stats['total_tasks'], 'color': '#4338CA'},
-                {'label': '已上传', 'value': self._stats['uploaded'], 'color': '#15803D'},
-                {'label': '已分享', 'value': self._stats['shared'], 'color': '#0E7490'},
-                {'label': '失败', 'value': self._stats['failed'], 'color': '#B91C1C'},
-                {'label': '上传队列', 'value': self._stats['queue_size'], 'color': '#B45309'}
+                {'label': '总任务', 'value': self._stats['total_tasks'], 'color': 'primary'},
+                {'label': '已上传', 'value': self._stats['uploaded'], 'color': 'success'},
+                {'label': '已分享', 'value': self._stats['shared'], 'color': 'info'},
+                {'label': '失败', 'value': self._stats['failed'], 'color': 'error'},
+                {'label': '上传队列', 'value': self._stats['queue_size'], 'color': 'warning'}
             ]
             
             def build_stat_card(card):
                 return {
                     'component': 'VCol',
-                    'props': {'cols': 12, 'md': 2},
+                    'props': {'cols': 12, 'sm': 6, 'md': 3, 'lg': 2},
                     'content': [{
-                        'component': 'VSheet',
-                        'props': {
-                            'elevation': 1,
-                            'class': 'pa-4 text-center rounded-lg',
-                            'style': 'background:#fff; border:1px solid rgba(15,23,42,0.08);'
-                        },
-                        'content': [
-                            {
+                        'component': 'VCard',
+                        'props': {'variant': 'tonal', 'color': card['color'], 'class': 'text-center'},
+                        'content': [{
+                            'component': 'VCardText',
+                            'props': {'class': 'py-4'},
+                            'content': [{
                                 'component': 'div',
-                                'props': {
-                                    'class': 'text-h4 font-weight-bold',
-                                    'style': f"color:{card['color']};"
-                                },
+                                'props': {'class': 'text-h5 font-weight-bold'},
                                 'content': str(card['value'])
-                            },
-                            {
+                            }, {
                                 'component': 'div',
                                 'props': {'class': 'text-caption text-medium-emphasis mt-1'},
                                 'content': card['label']
-                            }
-                        ]
+                            }]
+                        }]
                     }]
                 }
             
@@ -1471,18 +1465,22 @@ class Enhanced115(_PluginBase):
                 share_attempts = task.get('share_attempts', 0)
                 last_share_time = task.get('last_share_time')
                 last_share_display = time.strftime("%m-%d %H:%M", time.localtime(last_share_time)) if last_share_time else '--'
-                title = f"{task.get('media_title', '未知')} ｜ {task.get('actual_count', 0)}/{task.get('expected_count', 0)}"
-                subtitle = (
-                    f"模式：{task.get('share_mode', '未知')} ｜ 状态：{task.get('status', 'pending')} ｜ "
-                    f"分享次数：{share_attempts} ｜ 最近分享：{last_share_display}"
-                )
                 task_list_items.append({
                     'component': 'VListItem',
                     'props': {
-                        'title': title,
-                        'subtitle': subtitle
-                    }
+                        'title': task.get('media_title', '未知'),
+                        'subtitle': (
+                            f"进度：{task.get('actual_count', 0)}/{task.get('expected_count', 0)} ｜ "
+                            f"模式：{task.get('share_mode', '未知')} ｜ 状态：{task.get('status', 'pending')} ｜ "
+                            f"分享次数：{share_attempts} ｜ 最近分享：{last_share_display}"
+                        )
+                    },
+                    'content': [{
+                        'component': 'VDivider'
+                    }]
                 })
+            if task_list_items:
+                task_list_items[-1]['content'] = []
             
             tasks_table = {
                 'component': 'VCard',
