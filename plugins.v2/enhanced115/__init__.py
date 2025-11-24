@@ -1454,22 +1454,22 @@ class Enhanced115(_PluginBase):
                     'content': [{
                         'component': 'VCard',
                         'props': {'variant': 'tonal', 'color': card['color']},
-                        'content': [{
-                            'component': 'VCardText',
-                            'props': {'class': 'py-4 text-center'},
-                            'content': [
-                                {
-                                    'component': 'div',
-                                    'props': {'class': 'text-h5 font-weight-bold'},
-                                    'content': str(card['value'])
-                                },
-                                {
-                                    'component': 'div',
-                                    'props': {'class': 'text-caption text-medium-emphasis'},
-                                    'content': card['label']
+                        'content': [
+                            {
+                                'component': 'VCardTitle',
+                                'props': {
+                                    'text': str(card['value']),
+                                    'class': 'text-h5 font-weight-bold text-center'
                                 }
-                            ]
-                        }]
+                            },
+                            {
+                                'component': 'VCardSubtitle',
+                                'props': {
+                                    'text': card['label'],
+                                    'class': 'text-caption text-center text-medium-emphasis'
+                                }
+                            }
+                        ]
                     }]
                 } for card in stats_cards]
             }
