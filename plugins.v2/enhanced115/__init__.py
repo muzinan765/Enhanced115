@@ -928,8 +928,20 @@ class Enhanced115(_PluginBase):
             file_key = str(file_path)
             
             if file_key in completed_files:
-                logger.debug(f"【Enhanced115】文件已在处理中，跳过重复添加：{file_path.name}")
-                return
+                # 双重验证：检查数据库状态
+                # 如果在completed_files中但数据库显示未上传，说明是中断任务
+                if record.dest_storage == 'u115':
+                    # 数据库确认已上传，真的在处理中或已完成
+                    logger.debug(f"【Enhanced115】文件已上传，跳过重复添加：{file_path.name}")
+                    return
+                else:
+                    # 在completed_files中但数据库显示未上传，说明上传中断了
+                    # 清理completed_files，允许重新上传
+                    logger.info(f"【Enhanced115】检测到中断任务，清理并重新上传：{file_path.name}")
+                    completed_files.remove(file_key)
+                    task['completed_files'] = completed_files
+                    self._task_manager.update_task(download_hash, {'completed_files': completed_files})
+                    # 继续执行后面的上传逻辑
             
             # 映射远程路径
             remote_path = map_local_to_remote(str(file_path), self._path_mappings)
