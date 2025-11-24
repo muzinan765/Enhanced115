@@ -1424,11 +1424,11 @@ class Enhanced115(_PluginBase):
             logger.info(f"【Enhanced115】pending_tasks数量：{len(pending_tasks)}")
             
             stats_cards = [
-                {'label': '总任务', 'value': self._stats['total_tasks'], 'color': 'primary'},
-                {'label': '已上传', 'value': self._stats['uploaded'], 'color': 'success'},
-                {'label': '已分享', 'value': self._stats['shared'], 'color': 'info'},
-                {'label': '失败', 'value': self._stats['failed'], 'color': 'error'},
-                {'label': '上传队列', 'value': self._stats['queue_size'], 'color': 'warning'}
+                {'label': '总任务', 'value': self._stats['total_tasks'], 'color': '#4338CA'},
+                {'label': '已上传', 'value': self._stats['uploaded'], 'color': '#15803D'},
+                {'label': '已分享', 'value': self._stats['shared'], 'color': '#0E7490'},
+                {'label': '失败', 'value': self._stats['failed'], 'color': '#B91C1C'},
+                {'label': '上传队列', 'value': self._stats['queue_size'], 'color': '#B45309'}
             ]
             
             def build_stat_card(card):
@@ -1436,25 +1436,27 @@ class Enhanced115(_PluginBase):
                     'component': 'VCol',
                     'props': {'cols': 12, 'md': 2},
                     'content': [{
-                        'component': 'VCard',
-                        'props': {'variant': 'tonal', 'color': card['color']},
-                        'content': [{
-                            'component': 'VCardText',
-                            'props': {'class': 'py-4 text-center'},
-                            'content': [{
-                                'component': 'VCardTitle',
+                        'component': 'VSheet',
+                        'props': {
+                            'elevation': 1,
+                            'class': 'pa-4 text-center rounded-lg',
+                            'style': 'background:#fff; border:1px solid rgba(15,23,42,0.08);'
+                        },
+                        'content': [
+                            {
+                                'component': 'div',
                                 'props': {
-                                    'text': str(card['value']),
-                                    'class': 'text-h4 font-weight-bold'
-                                }
-                            }, {
-                                'component': 'VCardSubtitle',
-                                'props': {
-                                    'text': card['label'],
-                                    'class': 'text-caption'
-                                }
-                            }]
-                        }]
+                                    'class': 'text-h4 font-weight-bold',
+                                    'style': f"color:{card['color']};"
+                                },
+                                'content': str(card['value'])
+                            },
+                            {
+                                'component': 'div',
+                                'props': {'class': 'text-caption text-medium-emphasis mt-1'},
+                                'content': card['label']
+                            }
+                        ]
                     }]
                 }
             
