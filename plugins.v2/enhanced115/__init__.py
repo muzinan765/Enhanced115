@@ -1567,7 +1567,7 @@ class Enhanced115(_PluginBase):
             "auth": "bear"
         }]
     
-    def strm_full_sync(self, root_cid: str = None) -> dict:
+    def strm_full_sync(self, root_cid: str = None, scope: str = "both") -> dict:
         """
         全量同步API接口
         
@@ -1580,24 +1580,36 @@ class Enhanced115(_PluginBase):
         if not self._strm_manager:
             return {"success": False, "message": "STRM管理器未初始化"}
         
-        # 如果没有指定root_cid，使用配置的tv_root_cid
-        if not root_cid:
-            root_cid = self._tv_root_cid
+        roots = []
+        scope = (scope or "both").lower()
+        if root_cid:
+            roots = [root_cid]
+        else:
+            if scope in ("both", "movie"):
+                if self._movie_root_cid:
+                    roots.append(self._movie_root_cid)
+            if scope in ("both", "tv"):
+                if self._tv_root_cid:
+                    roots.append(self._tv_root_cid)
         
-        if not root_cid:
+        if not roots:
             return {"success": False, "message": "未配置根目录CID"}
         
         try:
-            stats = self._strm_manager.full_sync(
-                root_cid=root_cid,
-                target_dir=self._emby_local_path,
-                pan_media_dir="/Emby"
-            )
+            aggregated = {'total': 0, 'success': 0, 'failed': 0, 'skipped': 0}
+            for cid in roots:
+                stats = self._strm_manager.full_sync(
+                    root_cid=cid,
+                    target_dir=self._emby_local_path,
+                    pan_media_dir="/Emby"
+                )
+                for key in aggregated:
+                    aggregated[key] += stats.get(key, 0)
             
             return {
                 "success": True,
                 "message": "同步完成",
-                "stats": stats
+                "stats": aggregated
             }
         except Exception as e:
             logger.error(f"【Enhanced115】全量同步API调用失败：{e}")
