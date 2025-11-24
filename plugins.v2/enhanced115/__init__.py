@@ -923,6 +923,14 @@ class Enhanced115(_PluginBase):
                         logger.warning(f"【Enhanced115】删除文件失败：{file_path.name}，{del_err}")
                 return
             
+            # 去重检查：文件是否已在处理中（已加入队列或正在上传）
+            completed_files = task.get('completed_files', [])
+            file_key = str(file_path)
+            
+            if file_key in completed_files:
+                logger.debug(f"【Enhanced115】文件已在处理中，跳过重复添加：{file_path.name}")
+                return
+            
             # 映射远程路径
             remote_path = map_local_to_remote(str(file_path), self._path_mappings)
             if not remote_path:
