@@ -1515,7 +1515,18 @@ class Enhanced115(_PluginBase):
                 ]
             }
             
-            page_content = [stats_row, tasks_table]
+            page_content = [{
+                'component': 'VContainer',
+                'props': {'fluid': True, 'class': 'pa-0'},
+                'content': [stats_row, {
+                    'component': 'VRow',
+                    'content': [{
+                        'component': 'VCol',
+                        'props': {'cols': 12},
+                        'content': [tasks_table]
+                    }]
+                }]
+            }]
             
             # 如果启用STRM，添加全量同步按钮
             logger.info(f"【Enhanced115】_strm_enabled={self._strm_enabled}")
