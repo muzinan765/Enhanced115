@@ -1419,82 +1419,156 @@ class Enhanced115(_PluginBase):
         logger.info("【Enhanced115】get_page被调用")
         
         try:
-            # 获取所有待处理任务
+            # 获取任务信息
             pending_tasks = self._task_manager.get_all_pending_tasks() if self._task_manager else {}
             logger.info(f"【Enhanced115】pending_tasks数量：{len(pending_tasks)}")
             
-            task_lines = [
-                f"{task['media_title']}：{task['actual_count']}/{task['expected_count']} "
-                f"[{task['share_mode']}]"
-                for task in pending_tasks.values()
+            stats_cards = [
+                {
+                    'label': '总任务',
+                    'value': self._stats['total_tasks'],
+                    'color': 'primary'
+                },
+                {
+                    'label': '已上传',
+                    'value': self._stats['uploaded'],
+                    'color': 'success'
+                },
+                {
+                    'label': '已分享',
+                    'value': self._stats['shared'],
+                    'color': 'info'
+                },
+                {
+                    'label': '失败',
+                    'value': self._stats['failed'],
+                    'color': 'error'
+                },
+                {
+                    'label': '上传队列',
+                    'value': self._stats['queue_size'],
+                    'color': 'warning'
+                }
             ]
-            tasks_text = "\\n".join(task_lines) if task_lines else "无待处理任务"
             
-            stats_text = "\\n".join([
-                f"总任务：{self._stats['total_tasks']}",
-                f"已上传：{self._stats['uploaded']}",
-                f"已分享：{self._stats['shared']}",
-                f"失败：{self._stats['failed']}",
-                f"队列：{self._stats['queue_size']}",
-            ])
-            
-            def build_alert_row(title: str, text: str, color: str) -> dict:
-                """组装展示信息的VAlert行"""
+            def build_stat_card(card):
                 return {
-                    'component': 'VRow',
+                    'component': 'VCol',
+                    'props': {'cols': 12, 'md': 2},
                     'content': [{
-                        'component': 'VCol',
-                        'props': {'cols': 12},
+                        'component': 'VCard',
+                        'props': {'variant': 'tonal', 'color': card['color']},
                         'content': [{
-                            'component': 'VAlert',
-                            'props': {
-                                'color': color,
-                                'variant': 'tonal',
-                                'density': 'comfortable',
-                                'class': 'text-pre-wrap text-body-2',
-                                'title': title,
-                                'text': text
-                            }
+                            'component': 'VCardText',
+                            'content': [{
+                                'component': 'div',
+                                'props': {'class': 'd-flex flex-column align-center'},
+                                'content': [
+                                    {
+                                        'component': 'span',
+                                        'props': {'class': 'text-h5 font-weight-bold'},
+                                        'content': str(card['value'])
+                                    },
+                                    {
+                                        'component': 'span',
+                                        'props': {'class': 'text-caption'},
+                                        'content': card['label']
+                                    }
+                                ]
+                            }]
                         }]
                     }]
                 }
             
-            page_content = [
-                build_alert_row('任务统计', stats_text, 'primary'),
-                build_alert_row('待处理任务', tasks_text, 'secondary')
-            ]
+            stats_row = {
+                'component': 'VRow',
+                'content': [build_stat_card(card) for card in stats_cards]
+            }
+            
+            # 构建待处理任务表格
+            task_rows = []
+            for task in pending_tasks.values():
+                share_attempts = task.get('share_attempts', 0)
+                last_share_time = task.get('last_share_time')
+                last_share_display = time.strftime("%m-%d %H:%M", time.localtime(last_share_time)) if last_share_time else '--'
+                task_rows.append({
+                    'media_title': task.get('media_title', '未知'),
+                    'progress': f"{task.get('actual_count', 0)}/{task.get('expected_count', 0)}",
+                    'mode': task.get('share_mode', '未知'),
+                    'status': task.get('status', 'pending'),
+                    'share_attempts': share_attempts,
+                    'last_share_time': last_share_display
+                })
+            
+            tasks_table = {
+                'component': 'VCard',
+                'props': {'variant': 'tonal'},
+                'content': [
+                    {
+                        'component': 'VCardTitle',
+                        'props': {'text': f"待处理任务（{len(task_rows)}）"}
+                    },
+                    {
+                        'component': 'VDataTable',
+                        'props': {
+                            'items': task_rows,
+                            'headers': [
+                                {'title': '媒体', 'value': 'media_title'},
+                                {'title': '进度', 'value': 'progress'},
+                                {'title': '模式', 'value': 'mode'},
+                                {'title': '状态', 'value': 'status'},
+                                {'title': '分享次数', 'value': 'share_attempts'},
+                                {'title': '最近分享', 'value': 'last_share_time'}
+                            ],
+                            'items-per-page': 5,
+                            'density': 'compact'
+                        }
+                    }
+                ]
+            }
+            
+            page_content = [stats_row, tasks_table]
             
             # 如果启用STRM，添加全量同步按钮
             logger.info(f"【Enhanced115】_strm_enabled={self._strm_enabled}")
             if self._strm_enabled:
-                page_content.append({
-                    'component': 'VRow',
+                strm_info = [
+                    {'title': '本地目录', 'value': self._emby_local_path},
+                    {'title': '覆盖模式', 'value': self._strm_overwrite_mode},
+                    {'title': '字幕策略', 'value': '真实扩展 + fileid/pickcode 占位'}
+                ]
+                
+                strm_card = {
+                    'component': 'VCard',
+                    'props': {'variant': 'tonal'},
                     'content': [
                         {
-                            'component': 'VCol',
-                            'props': {'cols': 12, 'md': 8},
+                            'component': 'VCardTitle',
+                            'props': {'text': 'STRM 管理'}
+                        },
+                        {
+                            'component': 'VCardText',
                             'content': [{
-                                'component': 'VAlert',
-                                'props': {
-                                    'color': 'success',
-                                    'variant': 'tonal',
-                                    'density': 'comfortable',
-                                    'title': 'STRM管理',
-                                    'text': 'STRM文件映射115网盘文件，支持洗版自动管理',
-                                    'class': 'text-pre-wrap'
-                                }
+                                'component': 'VList',
+                                'props': {'density': 'compact'},
+                                'content': [{
+                                    'component': 'VListItem',
+                                    'props': {
+                                        'title': info['title'],
+                                        'subtitle': info['value']
+                                    }
+                                } for info in strm_info]
                             }]
                         },
                         {
-                            'component': 'VCol',
-                            'props': {'cols': 12, 'md': 4, 'class': 'd-flex align-center'},
+                            'component': 'VCardActions',
                             'content': [{
                                 'component': 'VBtn',
                                 'props': {
                                     'color': 'primary',
                                     'variant': 'elevated',
-                                    'size': 'large',
-                                    'text': '全量同步115到STRM'
+                                    'prependIcon': 'mdi-sync',
+                                    'text': '全量同步 STRM'
                                 },
                                 'events': {
                                     'click': {
@@ -1505,6 +1579,15 @@ class Enhanced115(_PluginBase):
                             }]
                         }
                     ]
+                }
+                
+                page_content.append({
+                    'component': 'VRow',
+                    'content': [{
+                        'component': 'VCol',
+                        'props': {'cols': 12},
+                        'content': [strm_card]
+                    }]
                 })
             
             logger.info(f"【Enhanced115】page_content长度：{len(page_content)}")
