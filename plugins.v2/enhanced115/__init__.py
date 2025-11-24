@@ -1431,32 +1431,33 @@ class Enhanced115(_PluginBase):
                 {'label': '上传队列', 'value': self._stats['queue_size'], 'color': 'warning'}
             ]
             
-            def build_stat_card(card):
-                return {
+            stats_row = {
+                'component': 'VRow',
+                'props': {'class': 'gy-2'},
+                'content': [{
                     'component': 'VCol',
                     'props': {'cols': 12, 'sm': 6, 'md': 3, 'lg': 2},
                     'content': [{
                         'component': 'VCard',
-                        'props': {'variant': 'tonal', 'color': card['color'], 'class': 'text-center'},
+                        'props': {'variant': 'tonal', 'color': card['color']},
                         'content': [{
                             'component': 'VCardText',
-                            'props': {'class': 'py-4'},
-                            'content': [{
-                                'component': 'div',
-                                'props': {'class': 'text-h5 font-weight-bold'},
-                                'content': str(card['value'])
-                            }, {
-                                'component': 'div',
-                                'props': {'class': 'text-caption text-medium-emphasis mt-1'},
-                                'content': card['label']
-                            }]
+                            'props': {'class': 'py-4 text-center'},
+                            'content': [
+                                {
+                                    'component': 'div',
+                                    'props': {'class': 'text-h5 font-weight-bold'},
+                                    'content': str(card['value'])
+                                },
+                                {
+                                    'component': 'div',
+                                    'props': {'class': 'text-caption text-medium-emphasis'},
+                                    'content': card['label']
+                                }
+                            ]
                         }]
                     }]
-                }
-            
-            stats_row = {
-                'component': 'VRow',
-                'content': [build_stat_card(card) for card in stats_cards]
+                } for card in stats_cards]
             }
             
             # 构建待处理任务列表
@@ -1467,20 +1468,25 @@ class Enhanced115(_PluginBase):
                 last_share_display = time.strftime("%m-%d %H:%M", time.localtime(last_share_time)) if last_share_time else '--'
                 task_list_items.append({
                     'component': 'VListItem',
-                    'props': {
-                        'title': task.get('media_title', '未知'),
-                        'subtitle': (
-                            f"进度：{task.get('actual_count', 0)}/{task.get('expected_count', 0)} ｜ "
-                            f"模式：{task.get('share_mode', '未知')} ｜ 状态：{task.get('status', 'pending')} ｜ "
-                            f"分享次数：{share_attempts} ｜ 最近分享：{last_share_display}"
-                        )
-                    },
-                    'content': [{
-                        'component': 'VDivider'
-                    }]
+                    'props': {'lines': 'three'},
+                    'content': [
+                        {
+                            'component': 'VListItemTitle',
+                            'content': task.get('media_title', '未知')
+                        },
+                        {
+                            'component': 'VListItemSubtitle',
+                            'content': f"进度：{task.get('actual_count', 0)}/{task.get('expected_count', 0)}"
+                        },
+                        {
+                            'component': 'VListItemSubtitle',
+                            'content': (
+                                f"模式：{task.get('share_mode', '未知')} ｜ 状态：{task.get('status', 'pending')} ｜ "
+                                f"分享次数：{share_attempts} ｜ 最近分享：{last_share_display}"
+                            )
+                        }
+                    ]
                 })
-            if task_list_items:
-                task_list_items[-1]['content'] = []
             
             tasks_table = {
                 'component': 'VCard',
