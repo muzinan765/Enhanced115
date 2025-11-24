@@ -1424,11 +1424,11 @@ class Enhanced115(_PluginBase):
             logger.info(f"【Enhanced115】pending_tasks数量：{len(pending_tasks)}")
             
             stats_cards = [
-                {'label': '总任务', 'value': self._stats['total_tasks'], 'color': '#E3F2FD'},
-                {'label': '已上传', 'value': self._stats['uploaded'], 'color': '#E8F5E9'},
-                {'label': '已分享', 'value': self._stats['shared'], 'color': '#E0F7FA'},
-                {'label': '失败', 'value': self._stats['failed'], 'color': '#FFEBEE'},
-                {'label': '上传队列', 'value': self._stats['queue_size'], 'color': '#FFF8E1'}
+                {'label': '总任务', 'value': self._stats['total_tasks'], 'color': 'primary'},
+                {'label': '已上传', 'value': self._stats['uploaded'], 'color': 'success'},
+                {'label': '已分享', 'value': self._stats['shared'], 'color': 'info'},
+                {'label': '失败', 'value': self._stats['failed'], 'color': 'error'},
+                {'label': '上传队列', 'value': self._stats['queue_size'], 'color': 'warning'}
             ]
             
             def build_stat_card(card):
@@ -1437,22 +1437,23 @@ class Enhanced115(_PluginBase):
                     'props': {'cols': 12, 'md': 2},
                     'content': [{
                         'component': 'VCard',
-                        'props': {'variant': 'flat', 'style': f"background-color:{card['color']}"},
+                        'props': {'variant': 'tonal', 'color': card['color']},
                         'content': [{
                             'component': 'VCardText',
                             'props': {'class': 'py-4 text-center'},
-                            'content': [
-                                {
-                                    'component': 'div',
-                                    'props': {'class': 'text-h4 font-weight-bold'},
-                                    'content': str(card['value'])
-                                },
-                                {
-                                    'component': 'div',
-                                    'props': {'class': 'text-caption text-medium-emphasis mt-1'},
-                                    'content': card['label']
+                            'content': [{
+                                'component': 'VCardTitle',
+                                'props': {
+                                    'text': str(card['value']),
+                                    'class': 'text-h4 font-weight-bold'
                                 }
-                            ]
+                            }, {
+                                'component': 'VCardSubtitle',
+                                'props': {
+                                    'text': card['label'],
+                                    'class': 'text-caption'
+                                }
+                            }]
                         }]
                     }]
                 }
@@ -1462,19 +1463,23 @@ class Enhanced115(_PluginBase):
                 'content': [build_stat_card(card) for card in stats_cards]
             }
             
-            # 构建待处理任务表格
-            task_rows = []
+            # 构建待处理任务列表
+            task_list_items = []
             for task in pending_tasks.values():
                 share_attempts = task.get('share_attempts', 0)
                 last_share_time = task.get('last_share_time')
                 last_share_display = time.strftime("%m-%d %H:%M", time.localtime(last_share_time)) if last_share_time else '--'
-                task_rows.append({
-                    'media_title': task.get('media_title', '未知'),
-                    'progress': f"{task.get('actual_count', 0)}/{task.get('expected_count', 0)}",
-                    'mode': task.get('share_mode', '未知'),
-                    'status': task.get('status', 'pending'),
-                    'share_attempts': share_attempts,
-                    'last_share_time': last_share_display
+                title = f"{task.get('media_title', '未知')} ｜ {task.get('actual_count', 0)}/{task.get('expected_count', 0)}"
+                subtitle = (
+                    f"模式：{task.get('share_mode', '未知')} ｜ 状态：{task.get('status', 'pending')} ｜ "
+                    f"分享次数：{share_attempts} ｜ 最近分享：{last_share_display}"
+                )
+                task_list_items.append({
+                    'component': 'VListItem',
+                    'props': {
+                        'title': title,
+                        'subtitle': subtitle
+                    }
                 })
             
             tasks_table = {
@@ -1483,36 +1488,22 @@ class Enhanced115(_PluginBase):
                 'content': [
                     {
                         'component': 'VCardTitle',
-                        'props': {'text': f"待处理任务（{len(task_rows)}）"}
+                        'props': {'text': f"待处理任务（{len(task_list_items)}）"}
                     },
                     {
                         'component': 'VCardText',
-                        'content': [
-                            {
-                                'component': 'VAlert',
-                                'props': {
-                                    'type': 'info',
-                                    'variant': 'tonal',
-                                    'text': '当前无需处理任务',
-                                    'class': 'my-4',
-                                }
-                            }
-                        ] if not task_rows else [{
-                            'component': 'VDataTable',
+                        'content': [{
+                            'component': 'VAlert',
                             'props': {
-                                'items': task_rows,
-                                'headers': [
-                                    {'title': '媒体', 'value': 'media_title'},
-                                    {'title': '进度', 'value': 'progress'},
-                                    {'title': '模式', 'value': 'mode'},
-                                    {'title': '状态', 'value': 'status'},
-                                    {'title': '分享次数', 'value': 'share_attempts'},
-                                    {'title': '最近分享', 'value': 'last_share_time'}
-                                ],
-                                'items-per-page': 5,
-                                'density': 'compact',
-                                'no-data-text': '暂无待处理任务'
+                                'type': 'info',
+                                'variant': 'tonal',
+                                'text': '当前无需处理任务',
+                                'class': 'my-4'
                             }
+                        }] if not task_list_items else [{
+                            'component': 'VList',
+                            'props': {'density': 'comfortable'},
+                            'content': task_list_items
                         }]
                     }
                 ]
@@ -1544,20 +1535,15 @@ class Enhanced115(_PluginBase):
                         {
                             'component': 'VCardText',
                             'content': [{
-                                'component': 'VSimpleTable',
+                                'component': 'VList',
                                 'props': {'density': 'compact'},
-                                'content': [
-                                    {
-                                        'component': 'tbody',
-                                        'content': [{
-                                            'component': 'tr',
-                                            'content': [
-                                                {'component': 'td', 'content': info['title']},
-                                                {'component': 'td', 'content': info['value']}
-                                            ]
-                                        } for info in strm_info]
+                                'content': [{
+                                    'component': 'VListItem',
+                                    'props': {
+                                        'title': info['title'],
+                                        'subtitle': info['value']
                                     }
-                                ]
+                                } for info in strm_info]
                             }]
                         },
                         {
