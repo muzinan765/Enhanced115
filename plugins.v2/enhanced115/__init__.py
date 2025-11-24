@@ -1438,67 +1438,39 @@ class Enhanced115(_PluginBase):
                 f"队列：{self._stats['queue_size']}"
             )
             
-            stats_cards = [
-                {'label': '总任务', 'value': self._stats['total_tasks'], 'color': 'primary'},
-                {'label': '已上传', 'value': self._stats['uploaded'], 'color': 'success'},
-                {'label': '已分享', 'value': self._stats['shared'], 'color': 'info'},
-                {'label': '失败', 'value': self._stats['failed'], 'color': 'error'},
-                {'label': '队列', 'value': self._stats['queue_size'], 'color': 'warning'}
-            ]
-            
-            stats_row = {
-                'component': 'VRow',
-                'content': [{
-                    'component': 'VCol',
-                    'props': {'cols': 12, 'sm': 6, 'md': 4, 'lg': 2},
-                    'content': [{
-                        'component': 'VCard',
-                        'props': {'variant': 'tonal', 'color': card['color']},
-                        'content': [
-                            {
-                                'component': 'VCardTitle',
-                                'props': {
-                                    'text': str(card['value']),
-                                    'class': 'text-h5 font-weight-bold text-center'
-                                }
-                            },
-                            {
-                                'component': 'VCardSubtitle',
-                                'props': {
-                                    'text': card['label'],
-                                    'class': 'text-caption text-center text-medium-emphasis'
-                                }
-                            }
-                        ]
-                    }]
-                } for card in stats_cards]
-            }
-            
-            # 构建任务卡片
-            tasks_card = {
-                'component': 'VCard',
-                'props': {'variant': 'tonal', 'color': 'secondary'},
-                'content': [
-                    {
-                        'component': 'VCardTitle',
-                        'props': {'text': '待处理任务'}
-                    },
-                    {
-                        'component': 'VCardText',
-                        'props': {'class': 'text-pre-wrap text-body-2'},
-                        'content': tasks_text
-                    }
-                ]
-            }
-            
             container_content = [
-                stats_row,
                 {
                     'component': 'VRow',
                     'content': [{
                         'component': 'VCol',
                         'props': {'cols': 12},
-                        'content': [tasks_card]
+                        'content': [{
+                            'component': 'VAlert',
+                            'props': {
+                                'color': 'primary',
+                                'variant': 'tonal',
+                                'title': '任务统计',
+                                'text': stats_text,
+                                'class': 'text-pre-wrap text-body-2'
+                            }
+                        }]
+                    }]
+                },
+                {
+                    'component': 'VRow',
+                    'content': [{
+                        'component': 'VCol',
+                        'props': {'cols': 12},
+                        'content': [{
+                            'component': 'VAlert',
+                            'props': {
+                                'color': 'secondary',
+                                'variant': 'tonal',
+                                'title': '待处理任务',
+                                'text': tasks_text,
+                                'class': 'text-pre-wrap text-body-2'
+                            }
+                        }]
                     }]
                 }
             ]
