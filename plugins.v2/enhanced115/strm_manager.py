@@ -49,7 +49,6 @@ class StrmManager:
         self.emby_local_path = Path(emby_local_path)
         self.overwrite_mode = overwrite_mode
         self.helper = StrmHelper()
-        self._pending_delete_strms = []  # 待删除的旧strm列表
     
     def handle_upload_success(self, local_path: Path, remote_path: str, 
                               file_info: dict, is_movie: bool) -> bool:
@@ -95,13 +94,13 @@ class StrmManager:
             logger.error(f"【Enhanced115】处理上传后strm生成失败：{e}")
             return False
     
-    def check_and_delete_old_version(self, remote_path: str, is_movie: bool) -> int:
+    def check_and_delete_old_version(self, remote_path: str, is_movie: bool) -> tuple:
         """
-        检查并删除115上的旧版本文件
+        检查115上的旧版本文件（不删除，只返回）
         
         :param remote_path: 新文件的115路径
         :param is_movie: 是否电影
-        :return: 删除的文件数量
+        :return: (旧文件数量, 旧strm列表)
         """
         try:
             # 计算strm目录
@@ -127,29 +126,24 @@ class StrmManager:
                     f"将在上传成功后删除"
                 )
             
-            # 返回旧strm列表（先不删除，等上传成功后删除）
-            self._pending_delete_strms = old_strms
-            return len(old_strms)
+            # 返回旧strm列表（不使用实例变量，避免多线程竞态）
+            return len(old_strms), old_strms
             
         except Exception as e:
             logger.error(f"【Enhanced115】检查旧版本失败：{e}")
-            self._pending_delete_strms = []
-            return 0
+            return 0, []
     
-    def delete_pending_old_versions(self) -> int:
+    def delete_old_versions(self, old_strms: list) -> int:
         """
-        删除待删除的旧版本（上传成功后调用）
+        删除指定的旧版本文件
         
+        :param old_strms: 旧strm列表
         :return: 删除成功的数量
         """
-        if not hasattr(self, '_pending_delete_strms'):
+        if not old_strms:
             return 0
         
-        old_strms = self._pending_delete_strms
-        deleted_count = self.helper.delete_old_files(self.client, old_strms)
-        
-        self._pending_delete_strms = []
-        return deleted_count
+        return self.helper.delete_old_files(self.client, old_strms)
     
     def full_sync(self, root_cid: str, target_dir: str, pan_media_dir: str, 
                   progress_callback=None) -> dict:

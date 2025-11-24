@@ -462,10 +462,11 @@ class Enhanced115(_PluginBase):
         # 2. 检查是否是替换操作（洗版）
         # 如果启用strm，使用strm方式检测；否则使用数据库方式
         old_version_count = 0
+        old_strms = []  # 保存旧strm列表（避免多线程竞态）
         if self._strm_enabled and self._strm_manager:
             # STRM模式：检查旧版本strm（不删除，等上传成功后删除）
             is_movie = task_info.get('is_movie', False)
-            old_version_count = self._strm_manager.check_and_delete_old_version(remote_path, is_movie)
+            old_version_count, old_strms = self._strm_manager.check_and_delete_old_version(remote_path, is_movie)
         else:
             # 传统模式：通过数据库检测并删除
             old_file_id = self._check_and_delete_old_file(src_path)
@@ -497,8 +498,8 @@ class Enhanced115(_PluginBase):
             # STRM功能：生成strm文件
             if self._strm_enabled and self._strm_manager:
                 # 删除115上的旧版本（如果有）
-                if old_version_count > 0:
-                    deleted_count = self._strm_manager.delete_pending_old_versions()
+                if old_strms:
+                    deleted_count = self._strm_manager.delete_old_versions(old_strms)
                     if deleted_count > 0:
                         logger.info(f"【Enhanced115】已删除{deleted_count}个旧版本")
                 
