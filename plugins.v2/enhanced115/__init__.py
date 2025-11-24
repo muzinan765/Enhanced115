@@ -1430,13 +1430,13 @@ class Enhanced115(_PluginBase):
             ]
             tasks_text = "\\n".join(task_lines) if task_lines else "无待处理任务"
             
-            stats_text = "\\n".join([
-                f"总任务：{self._stats['total_tasks']}",
-                f"已上传：{self._stats['uploaded']}",
-                f"已分享：{self._stats['shared']}",
-                f"失败：{self._stats['failed']}",
+            stats_text = (
+                f"总任务：{self._stats['total_tasks']}  ｜  "
+                f"已上传：{self._stats['uploaded']}  ｜  "
+                f"已分享：{self._stats['shared']}  ｜  "
+                f"失败：{self._stats['failed']}  ｜  "
                 f"队列：{self._stats['queue_size']}"
-            ])
+            )
             
             container_content = [
                 {
