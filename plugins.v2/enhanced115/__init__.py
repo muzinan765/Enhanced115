@@ -202,6 +202,10 @@ class Enhanced115(_PluginBase):
             # 启动上传队列
             self._start_upload_workers()
             
+            # 清理所有中断任务的uploading状态（恢复中断任务）
+            if self._task_manager:
+                self._task_manager.clear_uploading_on_startup()
+            
             logger.info("【Enhanced115】插件初始化完成（完全集成my_115_app逻辑）")
             
         except Exception as e:
@@ -447,6 +451,7 @@ class Enhanced115(_PluginBase):
         download_hash = upload_task['download_hash']
         task_info = upload_task['task_info']
         filename = local_path.name
+        file_key = str(local_path)
         
         # 提取src_path（兼容dict和对象）
         fileitem = upload_task['fileitem']
@@ -455,69 +460,88 @@ class Enhanced115(_PluginBase):
         else:
             src_path = fileitem.path
         
-        # 1. 记录已完成文件
-        if self._task_manager:
-            self._task_manager.increment_actual_count(download_hash, str(local_path))
-        
-        # 2. 检查是否是替换操作（洗版）
-        # 如果启用strm，使用strm方式检测；否则使用数据库方式
-        old_version_count = 0
-        old_strms = []  # 保存旧strm列表（避免多线程竞态）
-        if self._strm_enabled and self._strm_manager:
-            # STRM模式：检查旧版本strm（不删除，等上传成功后删除）
-            is_movie = task_info.get('is_movie', False)
-            old_version_count, old_strms = self._strm_manager.check_and_delete_old_version(remote_path, is_movie)
-        else:
-            # 传统模式：通过数据库检测并删除
-            old_file_id = self._check_and_delete_old_file(src_path)
-            if old_file_id:
-                logger.info(f"【Enhanced115】检测到替换操作，已删除115上的旧文件：{filename}")
-        
-        # 3. 上传到115
-        success, file_info = self._uploader.upload_file(local_path, remote_path, filename)
-        
-        if not success:
-            logger.error(f"【Enhanced115】上传失败：{filename}")
-            self._stats['failed'] += 1
-            return
-        
-        # 4. 更新数据库（local→u115）
-        # ⚠️ 关键：传入src_path，只更新当前文件的记录
-        # src_path已在上面提取
-        db_updated = DatabaseHandler.update_transfer_record(
-            src_path,
-            download_hash,
-            remote_path,
-            file_info
-        )
-        
-        if db_updated:
-            self._stats['uploaded'] += 1
-            logger.info(f"【Enhanced115】上传并更新数据库成功：{filename}")
+        try:
+            # 1. 标记正在上传
+            if self._task_manager:
+                self._task_manager.mark_uploading(download_hash, file_key)
             
-            # STRM功能：生成strm文件
+            # 2. 检查是否是替换操作（洗版）
+            # 如果启用strm，使用strm方式检测；否则使用数据库方式
+            old_version_count = 0
+            old_strms = []  # 保存旧strm列表（避免多线程竞态）
             if self._strm_enabled and self._strm_manager:
-                # 删除115上的旧版本（如果有）
-                if old_strms:
-                    deleted_count = self._strm_manager.delete_old_versions(old_strms)
-                    if deleted_count > 0:
-                        logger.info(f"【Enhanced115】已删除{deleted_count}个旧版本")
-                
-                # 生成新strm
+                # STRM模式：检查旧版本strm（不删除，等上传成功后删除）
                 is_movie = task_info.get('is_movie', False)
-                self._strm_manager.handle_upload_success(local_path, remote_path, file_info, is_movie)
+                old_version_count, old_strms = self._strm_manager.check_and_delete_old_version(remote_path, is_movie)
+            else:
+                # 传统模式：通过数据库检测并删除
+                old_file_id = self._check_and_delete_old_file(src_path)
+                if old_file_id:
+                    logger.info(f"【Enhanced115】检测到替换操作，已删除115上的旧文件：{filename}")
             
-            # 上传成功后删除本地文件（如果配置开启）
-            if self._delete_after_upload:
-                try:
-                    if local_path.exists():
-                        local_path.unlink()
-                        logger.info(f"【Enhanced115】已删除本地文件：{filename}")
-                except Exception as del_err:
-                    logger.warning(f"【Enhanced115】删除本地文件失败：{filename}，错误：{del_err}")
-        else:
-            logger.warning(f"【Enhanced115】数据库更新失败：{filename}")
-            return
+            # 3. 上传到115
+            success, file_info = self._uploader.upload_file(local_path, remote_path, filename)
+            
+            if not success:
+                logger.error(f"【Enhanced115】上传失败：{filename}")
+                self._stats['failed'] += 1
+                # 标记上传失败
+                if self._task_manager:
+                    self._task_manager.mark_upload_failed(download_hash, file_key)
+                return
+            
+            # 4. 更新数据库（local→u115）
+            # ⚠️ 关键：传入src_path，只更新当前文件的记录
+            # src_path已在上面提取
+            db_updated = DatabaseHandler.update_transfer_record(
+                src_path,
+                download_hash,
+                remote_path,
+                file_info
+            )
+            
+            if db_updated:
+                self._stats['uploaded'] += 1
+                logger.info(f"【Enhanced115】上传并更新数据库成功：{filename}")
+                
+                # 5. 标记已完成（从uploading移到completed）
+                if self._task_manager:
+                    self._task_manager.mark_completed(download_hash, file_key)
+                
+                # 6. STRM功能：生成strm文件
+                if self._strm_enabled and self._strm_manager:
+                    # 删除115上的旧版本（如果有）
+                    if old_strms:
+                        deleted_count = self._strm_manager.delete_old_versions(old_strms)
+                        if deleted_count > 0:
+                            logger.info(f"【Enhanced115】已删除{deleted_count}个旧版本")
+                    
+                    # 生成新strm
+                    is_movie = task_info.get('is_movie', False)
+                    self._strm_manager.handle_upload_success(local_path, remote_path, file_info, is_movie)
+                
+                # 7. 上传成功后删除本地文件（如果配置开启）
+                if self._delete_after_upload:
+                    try:
+                        if local_path.exists():
+                            local_path.unlink()
+                            logger.info(f"【Enhanced115】已删除本地文件：{filename}")
+                    except Exception as del_err:
+                        logger.warning(f"【Enhanced115】删除本地文件失败：{filename}，错误：{del_err}")
+            else:
+                logger.warning(f"【Enhanced115】数据库更新失败：{filename}")
+                # 标记上传失败
+                if self._task_manager:
+                    self._task_manager.mark_upload_failed(download_hash, file_key)
+                return
+                
+        except Exception as e:
+            logger.error(f"【Enhanced115】处理上传任务异常：{e}")
+            # 异常时也要清理uploading状态
+            if self._task_manager:
+                self._task_manager.mark_upload_failed(download_hash, file_key)
+            self._stats['failed'] += 1
+            raise
         
         # 5. 查询数据库真实完成数量（不用内存计数）
         actual_count = self._count_completed_files(download_hash)
@@ -924,24 +948,29 @@ class Enhanced115(_PluginBase):
                         logger.warning(f"【Enhanced115】删除文件失败：{file_path.name}，{del_err}")
                 return
             
-            # 去重检查：文件是否已在处理中（已加入队列或正在上传）
-            completed_files = task.get('completed_files', [])
+            # 去重检查：精确识别三种状态
             file_key = str(file_path)
             
-            if file_key in completed_files:
+            # 1. 检查是否正在上传（持久化数据，跨实例可见）
+            if self._task_manager.is_file_uploading(download_hash, file_key):
+                logger.debug(f"【Enhanced115】文件正在上传中，跳过：{file_path.name}")
+                return
+            
+            # 2. 检查是否已完成
+            if self._task_manager.is_file_completed(download_hash, file_key):
                 # 双重验证：检查数据库状态
-                # 如果在completed_files中但数据库显示未上传，说明是中断任务
                 if record.dest_storage == 'u115':
-                    # 数据库确认已上传，真的在处理中或已完成
-                    logger.debug(f"【Enhanced115】文件已上传，跳过重复添加：{file_path.name}")
+                    # 数据库确认已上传，真的已完成
+                    logger.debug(f"【Enhanced115】文件已上传，跳过：{file_path.name}")
                     return
                 else:
                     # 在completed_files中但数据库显示未上传，说明上传中断了
                     # 清理completed_files，允许重新上传
                     logger.info(f"【Enhanced115】检测到中断任务，清理并重新上传：{file_path.name}")
-                    completed_files.remove(file_key)
-                    task['completed_files'] = completed_files
-                    self._task_manager.update_task(download_hash, {'completed_files': completed_files})
+                    completed_files = task.get('completed_files', [])
+                    if file_key in completed_files:
+                        completed_files.remove(file_key)
+                        self._task_manager.update_task(download_hash, {'completed_files': completed_files})
                     # 继续执行后面的上传逻辑
             
             # 映射远程路径
@@ -1688,10 +1717,12 @@ class Enhanced115(_PluginBase):
             self._stop_event.set()
             
             if self._upload_executor:
-                logger.info("【Enhanced115】正在停止...")
-                self._upload_executor.shutdown(wait=False)
+                logger.info("【Enhanced115】正在停止上传线程，等待任务完成...")
+                # 等待线程完成（防止资源泄漏和重复上传）
+                self._upload_executor.shutdown(wait=True)
                 self._upload_executor = None
             
+            # 清空队列
             while not self._upload_queue.empty():
                 try:
                     self._upload_queue.get_nowait()
@@ -1702,6 +1733,4 @@ class Enhanced115(_PluginBase):
             logger.info("【Enhanced115】已停止")
             
         except Exception as e:
-            logger.error(f"【Enhanced115】停止服务时出错：{e}")
-
             logger.error(f"【Enhanced115】停止服务时出错：{e}")

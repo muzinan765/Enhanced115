@@ -2,6 +2,7 @@
 任务管理模块 - 管理待处理任务
 完全复制my_115_app的任务管理逻辑
 """
+from pathlib import Path
 from typing import Dict, Any, Optional
 import time
 
@@ -57,7 +58,8 @@ class TaskManager:
             'share_attempts': 0,
             'last_share_time': None,
             'last_fail_reason': '',
-            'completed_files': [],
+            'uploading_files': [],  # 正在上传的文件（持久化）
+            'completed_files': [],  # 已完成的文件（持久化）
             'pending_cleanup': [],
             'notification_sent': False,
             'share_history': []
@@ -87,22 +89,115 @@ class TaskManager:
             task.update(updates)
             self.data_ops.save_data(task_key, task)
     
-    def increment_actual_count(self, download_hash: str, file_path: str = None):
-        """增加实际完成数量，并可记录完成的文件"""
+    def mark_uploading(self, download_hash: str, file_path: str):
+        """
+        标记文件正在上传（上传开始时调用）
+        
+        :param download_hash: 任务hash
+        :param file_path: 文件路径
+        """
         task = self.get_task(download_hash)
         if task:
-            task['actual_count'] = task.get('actual_count', 0) + 1
-            if file_path:
-                completed = set(task.get('completed_files') or [])
-                completed.add(file_path)
-                task['completed_files'] = list(completed)
-            task_key = self._get_task_key(download_hash)
-            self.data_ops.save_data(task_key, task)
+            uploading = set(task.get('uploading_files') or [])
+            uploading.add(file_path)
+            task['uploading_files'] = list(uploading)
+            self.update_task(download_hash, {'uploading_files': task['uploading_files']})
+            logger.debug(f"【Enhanced115】标记正在上传：{Path(file_path).name}")
+    
+    def mark_completed(self, download_hash: str, file_path: str):
+        """
+        标记文件已完成（上传成功后调用）
+        
+        :param download_hash: 任务hash
+        :param file_path: 文件路径
+        """
+        task = self.get_task(download_hash)
+        if task:
+            # 从uploading移除
+            uploading = set(task.get('uploading_files') or [])
+            uploading.discard(file_path)
+            
+            # 加入completed
+            completed = set(task.get('completed_files') or [])
+            completed.add(file_path)
+            
+            # 更新计数
+            task['actual_count'] = len(completed)
+            task['uploading_files'] = list(uploading)
+            task['completed_files'] = list(completed)
+            
+            self.update_task(download_hash, {
+                'actual_count': task['actual_count'],
+                'uploading_files': task['uploading_files'],
+                'completed_files': task['completed_files']
+            })
             
             logger.debug(
                 f"【Enhanced115】任务进度更新：{task['media_title']}，"
                 f"{task['actual_count']}/{task['expected_count']}"
             )
+    
+    def mark_upload_failed(self, download_hash: str, file_path: str):
+        """
+        标记上传失败（从uploading中移除）
+        
+        :param download_hash: 任务hash
+        :param file_path: 文件路径
+        """
+        task = self.get_task(download_hash)
+        if task:
+            uploading = set(task.get('uploading_files') or [])
+            uploading.discard(file_path)
+            task['uploading_files'] = list(uploading)
+            self.update_task(download_hash, {'uploading_files': task['uploading_files']})
+            logger.debug(f"【Enhanced115】标记上传失败：{Path(file_path).name}")
+    
+    def is_file_uploading(self, download_hash: str, file_path: str) -> bool:
+        """
+        检查文件是否正在上传
+        
+        :param download_hash: 任务hash
+        :param file_path: 文件路径
+        :return: 是否正在上传
+        """
+        task = self.get_task(download_hash)
+        if not task:
+            return False
+        uploading_files = task.get('uploading_files', [])
+        return file_path in uploading_files
+    
+    def is_file_completed(self, download_hash: str, file_path: str) -> bool:
+        """
+        检查文件是否已完成
+        
+        :param download_hash: 任务hash
+        :param file_path: 文件路径
+        :return: 是否已完成
+        """
+        task = self.get_task(download_hash)
+        if not task:
+            return False
+        completed_files = task.get('completed_files', [])
+        return file_path in completed_files
+    
+    def clear_uploading_on_startup(self):
+        """
+        程序启动时清空所有uploading状态（恢复中断任务）
+        """
+        all_tasks = self.get_all_pending_tasks()
+        cleared_count = 0
+        for download_hash, task in all_tasks.items():
+            uploading_files = task.get('uploading_files', [])
+            if uploading_files:
+                logger.info(
+                    f"【Enhanced115】清理中断任务的uploading状态："
+                    f"{task['media_title']}，{len(uploading_files)}个文件"
+                )
+                self.update_task(download_hash, {'uploading_files': []})
+                cleared_count += len(uploading_files)
+        
+        if cleared_count > 0:
+            logger.info(f"【Enhanced115】已清理{cleared_count}个中断任务文件")
     
     def append_cleanup_targets(self, download_hash: str, paths: list):
         """记录待清理的旧文件（STRM/字幕）"""
