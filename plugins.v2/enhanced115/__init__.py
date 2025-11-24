@@ -1424,31 +1424,11 @@ class Enhanced115(_PluginBase):
             logger.info(f"【Enhanced115】pending_tasks数量：{len(pending_tasks)}")
             
             stats_cards = [
-                {
-                    'label': '总任务',
-                    'value': self._stats['total_tasks'],
-                    'color': 'primary'
-                },
-                {
-                    'label': '已上传',
-                    'value': self._stats['uploaded'],
-                    'color': 'success'
-                },
-                {
-                    'label': '已分享',
-                    'value': self._stats['shared'],
-                    'color': 'info'
-                },
-                {
-                    'label': '失败',
-                    'value': self._stats['failed'],
-                    'color': 'error'
-                },
-                {
-                    'label': '上传队列',
-                    'value': self._stats['queue_size'],
-                    'color': 'warning'
-                }
+                {'label': '总任务', 'value': self._stats['total_tasks'], 'color': '#E3F2FD'},
+                {'label': '已上传', 'value': self._stats['uploaded'], 'color': '#E8F5E9'},
+                {'label': '已分享', 'value': self._stats['shared'], 'color': '#E0F7FA'},
+                {'label': '失败', 'value': self._stats['failed'], 'color': '#FFEBEE'},
+                {'label': '上传队列', 'value': self._stats['queue_size'], 'color': '#FFF8E1'}
             ]
             
             def build_stat_card(card):
@@ -1457,25 +1437,22 @@ class Enhanced115(_PluginBase):
                     'props': {'cols': 12, 'md': 2},
                     'content': [{
                         'component': 'VCard',
-                        'props': {'variant': 'tonal', 'color': card['color']},
+                        'props': {'variant': 'flat', 'style': f"background-color:{card['color']}"},
                         'content': [{
                             'component': 'VCardText',
-                            'content': [{
-                                'component': 'div',
-                                'props': {'class': 'd-flex flex-column align-center'},
-                                'content': [
-                                    {
-                                        'component': 'span',
-                                        'props': {'class': 'text-h5 font-weight-bold'},
-                                        'content': str(card['value'])
-                                    },
-                                    {
-                                        'component': 'span',
-                                        'props': {'class': 'text-caption'},
-                                        'content': card['label']
-                                    }
-                                ]
-                            }]
+                            'props': {'class': 'py-4 text-center'},
+                            'content': [
+                                {
+                                    'component': 'div',
+                                    'props': {'class': 'text-h4 font-weight-bold'},
+                                    'content': str(card['value'])
+                                },
+                                {
+                                    'component': 'div',
+                                    'props': {'class': 'text-caption text-medium-emphasis mt-1'},
+                                    'content': card['label']
+                                }
+                            ]
                         }]
                     }]
                 }
@@ -1502,27 +1479,41 @@ class Enhanced115(_PluginBase):
             
             tasks_table = {
                 'component': 'VCard',
-                'props': {'variant': 'tonal'},
+                'props': {'variant': 'flat'},
                 'content': [
                     {
                         'component': 'VCardTitle',
                         'props': {'text': f"待处理任务（{len(task_rows)}）"}
                     },
                     {
-                        'component': 'VDataTable',
-                        'props': {
-                            'items': task_rows,
-                            'headers': [
-                                {'title': '媒体', 'value': 'media_title'},
-                                {'title': '进度', 'value': 'progress'},
-                                {'title': '模式', 'value': 'mode'},
-                                {'title': '状态', 'value': 'status'},
-                                {'title': '分享次数', 'value': 'share_attempts'},
-                                {'title': '最近分享', 'value': 'last_share_time'}
-                            ],
-                            'items-per-page': 5,
-                            'density': 'compact'
-                        }
+                        'component': 'VCardText',
+                        'content': [
+                            {
+                                'component': 'VAlert',
+                                'props': {
+                                    'type': 'info',
+                                    'variant': 'tonal',
+                                    'text': '当前无需处理任务',
+                                    'class': 'my-4',
+                                }
+                            }
+                        ] if not task_rows else [{
+                            'component': 'VDataTable',
+                            'props': {
+                                'items': task_rows,
+                                'headers': [
+                                    {'title': '媒体', 'value': 'media_title'},
+                                    {'title': '进度', 'value': 'progress'},
+                                    {'title': '模式', 'value': 'mode'},
+                                    {'title': '状态', 'value': 'status'},
+                                    {'title': '分享次数', 'value': 'share_attempts'},
+                                    {'title': '最近分享', 'value': 'last_share_time'}
+                                ],
+                                'items-per-page': 5,
+                                'density': 'compact',
+                                'no-data-text': '暂无待处理任务'
+                            }
+                        }]
                     }
                 ]
             }
@@ -1540,29 +1531,40 @@ class Enhanced115(_PluginBase):
                 
                 strm_card = {
                     'component': 'VCard',
-                    'props': {'variant': 'tonal'},
+                    'props': {'variant': 'flat', 'class': 'pa-4'},
                     'content': [
                         {
                             'component': 'VCardTitle',
                             'props': {'text': 'STRM 管理'}
                         },
                         {
+                            'component': 'VCardSubtitle',
+                            'props': {'text': 'STRM 文件映射到 115，自动处理洗版与字幕占位'}
+                        },
+                        {
                             'component': 'VCardText',
                             'content': [{
-                                'component': 'VList',
+                                'component': 'VSimpleTable',
                                 'props': {'density': 'compact'},
-                                'content': [{
-                                    'component': 'VListItem',
-                                    'props': {
-                                        'title': info['title'],
-                                        'subtitle': info['value']
+                                'content': [
+                                    {
+                                        'component': 'tbody',
+                                        'content': [{
+                                            'component': 'tr',
+                                            'content': [
+                                                {'component': 'td', 'content': info['title']},
+                                                {'component': 'td', 'content': info['value']}
+                                            ]
+                                        } for info in strm_info]
                                     }
-                                } for info in strm_info]
+                                ]
                             }]
                         },
                         {
                             'component': 'VCardActions',
                             'content': [{
+                                'component': 'VSpacer'
+                            }, {
                                 'component': 'VBtn',
                                 'props': {
                                     'color': 'primary',
