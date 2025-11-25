@@ -96,6 +96,9 @@ class Enhanced115(_PluginBase):
         self._cleanup_interval = 600  # 清理检查间隔（秒），默认10分钟
         self._cleanup_tag = "已整理"  # 整理完成标签名称
         
+        # 任务超时配置
+        self._task_timeout_hours = 24  # 任务超时时间（小时），默认24小时
+        
         # 下载冲突解决配置
         self._conflict_check_enabled = False  # 是否启用下载冲突检查
         self._subscribe_downloader = ""  # 订阅下载器
@@ -175,6 +178,9 @@ class Enhanced115(_PluginBase):
         self._cleanup_enabled = config.get("cleanup_enabled", False)
         self._cleanup_interval = int(config.get("cleanup_interval", 600))
         self._cleanup_tag = config.get("cleanup_tag", "已整理")
+        
+        # 任务超时配置
+        self._task_timeout_hours = int(config.get("task_timeout_hours", 24))
         
         # 下载冲突解决配置
         self._conflict_check_enabled = config.get("conflict_check_enabled", False)
@@ -677,6 +683,10 @@ class Enhanced115(_PluginBase):
             return
         
         try:
+            # 首先清理超时任务
+            if self._task_manager and self._task_timeout_hours:
+                self._task_manager.check_for_timeouts(self._task_timeout_hours)
+            
             # 获取所有pending任务
             pending_tasks = self._task_manager.get_all_pending_tasks()
             
@@ -1541,6 +1551,19 @@ class Enhanced115(_PluginBase):
                                         'hint': '默认"已整理"，硬链接模式可能是"copied"'
                                     }
                                 }]
+                            },
+                            {
+                                'component': 'VCol',
+                                'props': {'cols': 12, 'md': 6},
+                                'content': [{
+                                    'component': 'VTextField',
+                                    'props': {
+                                        'model': 'task_timeout_hours',
+                                        'label': '任务超时时间（小时）',
+                                        'type': 'number',
+                                        'hint': '超过此时间未完成的任务将被清理，默认24小时'
+                                    }
+                                }]
                             }
                         ]
                     },
@@ -1656,6 +1679,7 @@ class Enhanced115(_PluginBase):
             'cleanup_enabled': False,
             'cleanup_interval': 600,
             'cleanup_tag': '已整理',
+            'task_timeout_hours': 24,
             'conflict_check_enabled': False,
             'subscribe_downloader': '',
             'brush_downloader': '',

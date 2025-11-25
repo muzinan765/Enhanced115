@@ -297,4 +297,36 @@ class TaskManager:
     def _get_task_key(self, download_hash: str) -> str:
         """生成任务key"""
         return f"{self._task_key_prefix}{download_hash}"
+    
+    def check_for_timeouts(self, timeout_hours: int = 24):
+        """
+        检查并清理超时任务（完全复制my_115_app逻辑）
+        
+        :param timeout_hours: 超时时间（小时）
+        """
+        all_tasks = self.get_all_pending_tasks()
+        if not all_tasks:
+            return
+        
+        current_time = int(time.time())
+        timeout_seconds = timeout_hours * 3600
+        tasks_to_remove = []
+        
+        for download_hash, task in all_tasks.items():
+            creation_time = task.get('creation_time', current_time)
+            if current_time - creation_time > timeout_seconds:
+                tasks_to_remove.append(download_hash)
+        
+        if tasks_to_remove:
+            for download_hash in tasks_to_remove:
+                task = all_tasks[download_hash]
+                media_title = task.get('media_title', '未知')
+                logger.warning(
+                    f"【Enhanced115】任务超时，将被清理："
+                    f"{media_title}，已等待"
+                    f"{(current_time - task.get('creation_time', current_time)) / 3600:.1f}小时"
+                )
+                self.remove_task(download_hash)
+            
+            logger.info(f"【Enhanced115】已清理{len(tasks_to_remove)}个超时任务")
 
