@@ -227,23 +227,26 @@ class StrmManager:
                         result = result_queue.get()
                         logger.debug(f"【Enhanced115】收集线程获取到结果：{result}")
                         
-                        if result is None:
-                            logger.info(f"【Enhanced115】收集线程收到结束信号，共收集{result_count}个结果")
-                            logger.info(f"【Enhanced115】收集线程准备退出")
-                            break
-                        
-                        result_count += 1
-                        status, path = result
-                        if status == 'success':
-                            stats['success'] += 1
-                        else:
-                            stats['failed'] += 1
-                        
-                        logger.debug(f"【Enhanced115】调用result task_done")
-                        result_queue.task_done()
-                        
-                        if result_count <= 5 or result_count % 10 == 0:
-                            logger.info(f"【Enhanced115】收集线程已收集{result_count}个结果（成功={stats['success']}, 失败={stats['failed']}）")
+                        try:
+                            if result is None:
+                                logger.info(f"【Enhanced115】收集线程收到结束信号，共收集{result_count}个结果")
+                                logger.info(f"【Enhanced115】收集线程准备退出")
+                                break
+                            
+                            result_count += 1
+                            status, path = result
+                            if status == 'success':
+                                stats['success'] += 1
+                            else:
+                                stats['failed'] += 1
+                            
+                            if result_count <= 5 or result_count % 10 == 0:
+                                logger.info(f"【Enhanced115】收集线程已收集{result_count}个结果（成功={stats['success']}, 失败={stats['failed']}）")
+                        finally:
+                            # 关键：每次get()后都要调用task_done()，包括None
+                            logger.debug(f"【Enhanced115】调用result task_done")
+                            result_queue.task_done()
+                            
                 except Exception as e:
                     logger.error(f"【Enhanced115】收集线程崩溃：{e}", exc_info=True)
                 finally:
@@ -357,19 +360,23 @@ class StrmManager:
                 if progress_callback:
                     progress_callback(stats)
             
-            # 等待队列完成
+            # 等待队列完成（参考p115strmhelper的正确顺序）
             logger.info(f"【Enhanced115】遍历完成，开始等待写入队列完成，共处理{batch_count}批")
-            write_queue.put(None)
-            logger.info(f"【Enhanced115】等待写入队列join...")
-            write_queue.join()
-            logger.info(f"【Enhanced115】等待写入线程join...")
-            writer_thread.join()
             
-            logger.info(f"【Enhanced115】等待结果队列join...")
-            result_queue.put(None)
-            result_queue.join()
-            logger.info(f"【Enhanced115】等待收集线程join...")
-            collector_thread.join()
+            logger.info(f"【Enhanced115】步骤1：等待写入队列join...")
+            write_queue.join()  # 1. 先等待队列中的任务完成
+            
+            logger.info(f"【Enhanced115】步骤2：发送结束信号到写入队列")
+            write_queue.put(None)  # 2. 再发送结束信号给写入线程
+            
+            logger.info(f"【Enhanced115】步骤3：等待写入线程join...")
+            writer_thread.join()  # 3. 等待写入线程退出（线程会自动put(None)到result_queue）
+            
+            logger.info(f"【Enhanced115】步骤4：等待结果队列join...")
+            result_queue.join()  # 4. 等待结果队列完成（收集线程会收到None）
+            
+            logger.info(f"【Enhanced115】步骤5：等待收集线程join...")
+            collector_thread.join()  # 5. 等待收集线程退出
             
             logger.info(f"【Enhanced115】所有线程已完成")
             
