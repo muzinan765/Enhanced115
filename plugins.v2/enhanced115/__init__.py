@@ -1833,14 +1833,14 @@ class Enhanced115(_PluginBase):
     def get_api(self) -> List[Dict[str, Any]]:
         """注册插件API"""
         return [{
-            "path": "/strm_full_sync",
+            "path": "/Enhanced115/strm_full_sync",
             "endpoint": self.strm_full_sync,
             "methods": ["POST"],
             "summary": "全量同步115到STRM",
             "description": "扫描115指定目录，生成本地strm映射文件",
             "auth": "bear"
         }, {
-            "path": "/test_notifications",
+            "path": "/Enhanced115/test_notifications",
             "endpoint": self.test_system_notifications,
             "methods": ["GET"],
             "summary": "测试115系统通知API",
