@@ -781,13 +781,14 @@ class Enhanced115(_PluginBase):
     
     def _scan_and_clean_uploaded_files(self):
         """
-        扫描/media目录，清理已上传的文件或重新上传未成功的文件
+        扫描媒体库目录，清理已上传的文件或重新上传未成功的文件
         
         逻辑：
-        1. 扫描/media目录下的所有媒体文件
-        2. 查询transferhistory表检查状态
-        3. dest_storage='u115'且fileid存在 → 删除本地文件
-        4. dest_storage='local'或fileid为null → 重新上传
+        1. 从MoviePilot配置中获取所有本地媒体库目录
+        2. 扫描这些目录下的所有媒体文件
+        3. 查询transferhistory表检查状态
+        4. dest_storage='u115'且fileid存在 → 删除本地文件
+        5. dest_storage='local'或fileid为null → 重新上传
         """
         if not self._enabled or not self._p115_client:
             return
@@ -795,18 +796,26 @@ class Enhanced115(_PluginBase):
         try:
             from pathlib import Path
             from app.db.transferhistory_oper import TransferHistoryOper
+            from app.helper.directory import DirectoryHelper
             
-            logger.info("【Enhanced115】开始扫描/media目录...")
+            logger.info("【Enhanced115】开始扫描媒体库目录...")
             
-            # 获取/media路径（从path_mappings提取）
+            # 从MoviePilot配置中获取所有本地媒体库目录
+            directory_helper = DirectoryHelper()
+            library_dirs = directory_helper.get_local_library_dirs()
+            
+            if not library_dirs:
+                logger.warning("【Enhanced115】未配置本地媒体库目录")
+                return
+            
             media_paths = []
-            for mapping in self._path_mappings:
-                local_path = mapping.get('local')
-                if local_path and 'media' in local_path.lower():
-                    media_paths.append(Path(local_path))
+            for dir_conf in library_dirs:
+                if dir_conf.library_path:
+                    media_paths.append(Path(dir_conf.library_path))
+                    logger.info(f"【Enhanced115】添加扫描路径：{dir_conf.library_path}")
             
             if not media_paths:
-                logger.warning("【Enhanced115】未找到/media路径配置")
+                logger.warning("【Enhanced115】未找到有效的媒体库路径")
                 return
             
             transferhis = TransferHistoryOper()
