@@ -34,6 +34,7 @@ from .task_analyzer import TaskAnalyzer
 from .task_manager import TaskManager
 from .password_strategy import PasswordStrategy
 from .strm_manager import StrmManager
+from .cleanup_manager import CleanupManager
 from .utils import map_local_to_remote, parse_path_mappings
 
 
@@ -90,6 +91,16 @@ class Enhanced115(_PluginBase):
         self._mediaserver_refresh_enabled = False  # 是否启用媒体服务器刷新
         self._mediaservers = []  # 要刷新的媒体服务器列表
         
+        # 清理和重试配置
+        self._cleanup_enabled = False  # 是否启用自动清理和重试
+        self._cleanup_interval = 600  # 清理检查间隔（秒），默认10分钟
+        self._cleanup_tag = "已整理"  # 整理完成标签名称
+        
+        # 下载冲突解决配置
+        self._conflict_check_enabled = False  # 是否启用下载冲突检查
+        self._subscribe_downloader = ""  # 订阅下载器
+        self._brush_downloader = ""  # 刷流下载器
+        
         # 处理器
         self._p115_client = None
         self._uploader = None
@@ -97,6 +108,7 @@ class Enhanced115(_PluginBase):
         self._telegram = None
         self._task_manager = None
         self._strm_manager = None
+        self._cleanup_manager = None
         
         # 上传队列
         self._upload_queue = queue.Queue()
@@ -159,6 +171,16 @@ class Enhanced115(_PluginBase):
             # 兼容旧配置（字符串格式）
             self._mediaservers = [s.strip() for s in str(mediaservers_value).split(",") if s.strip()]
         
+        # 清理和重试配置
+        self._cleanup_enabled = config.get("cleanup_enabled", False)
+        self._cleanup_interval = int(config.get("cleanup_interval", 600))
+        self._cleanup_tag = config.get("cleanup_tag", "已整理")
+        
+        # 下载冲突解决配置
+        self._conflict_check_enabled = config.get("conflict_check_enabled", False)
+        self._subscribe_downloader = config.get("subscribe_downloader", "")
+        self._brush_downloader = config.get("brush_downloader", "")
+        
         # 停止旧服务
         self.stop_service()
         
@@ -212,6 +234,13 @@ class Enhanced115(_PluginBase):
                 logger.info("【Enhanced115】STRM管理器已初始化")
                 if self._mediaserver_refresh_enabled:
                     logger.info(f"【Enhanced115】媒体服务器刷新已启用，目标服务器：{self._mediaservers}")
+            
+            # 初始化清理管理器
+            if self._cleanup_enabled:
+                self._cleanup_manager = CleanupManager(self, cleanup_tag=self._cleanup_tag)
+                logger.info(f"【Enhanced115】清理管理器已初始化，检查间隔：{self._cleanup_interval}秒，标签：{self._cleanup_tag}")
+                if self._conflict_check_enabled:
+                    logger.info(f"【Enhanced115】下载冲突检查已启用，订阅：{self._subscribe_downloader}，刷流：{self._brush_downloader}")
             
             # 启动上传队列
             self._start_upload_workers()
@@ -432,6 +461,10 @@ class Enhanced115(_PluginBase):
                 f"【Enhanced115】加入上传队列：{transferinfo.target_item.name}，"
                 f"任务：{task['media_title']} ({task['actual_count']}/{task['expected_count']})"
             )
+            
+            # 如果启用了清理功能，将download_hash加入清理检查队列
+            if self._cleanup_enabled and self._cleanup_manager and download_hash:
+                self._cleanup_manager.add_to_check_queue(download_hash)
             
         except Exception as e:
             logger.error(f"【Enhanced115】处理TransferComplete事件失败：{e}")
@@ -1067,13 +1100,21 @@ class Enhanced115(_PluginBase):
 
     def get_form(self) -> Tuple[List[dict], Dict[str, Any]]:
         """拼装插件配置页面"""
-        # 获取所有媒体服务器配置（参考p115strmhelper）
+        # 获取所有媒体服务器配置
         from app.helper.mediaserver import MediaServerHelper
+        from app.helper.downloader import DownloaderHelper
         
         mediaserver_helper = MediaServerHelper()
         mediaserver_options = [
             {"title": config.name, "value": config.name}
             for config in mediaserver_helper.get_configs().values()
+        ]
+        
+        # 获取所有下载器配置
+        downloader_helper = DownloaderHelper()
+        downloader_options = [
+            {"title": config.name, "value": config.name}
+            for config in downloader_helper.get_configs().values()
         ]
         
         return [
@@ -1460,6 +1501,93 @@ class Enhanced115(_PluginBase):
                             }
                         ]
                     },
+                    # 清理和重试
+                    {
+                        'component': 'VRow',
+                        'content': [
+                            {
+                                'component': 'VCol',
+                                'props': {'cols': 12, 'md': 6},
+                                'content': [{
+                                    'component': 'VSwitch',
+                                    'props': {
+                                        'model': 'cleanup_enabled',
+                                        'label': '启用自动清理和重试',
+                                        'hint': '整理完成后自动清理任务或重试失败文件'
+                                    }
+                                }]
+                            },
+                            {
+                                'component': 'VCol',
+                                'props': {'cols': 12, 'md': 6},
+                                'content': [{
+                                    'component': 'VTextField',
+                                    'props': {
+                                        'model': 'cleanup_interval',
+                                        'label': '检查间隔（秒）',
+                                        'type': 'number',
+                                        'hint': '建议300-600秒，默认600'
+                                    }
+                                }]
+                            },
+                            {
+                                'component': 'VCol',
+                                'props': {'cols': 12, 'md': 6},
+                                'content': [{
+                                    'component': 'VTextField',
+                                    'props': {
+                                        'model': 'cleanup_tag',
+                                        'label': '整理完成标签',
+                                        'hint': '默认"已整理"，硬链接模式可能是"copied"'
+                                    }
+                                }]
+                            }
+                        ]
+                    },
+                    # 下载冲突解决
+                    {
+                        'component': 'VRow',
+                        'content': [
+                            {
+                                'component': 'VCol',
+                                'props': {'cols': 12, 'md': 4},
+                                'content': [{
+                                    'component': 'VSwitch',
+                                    'props': {
+                                        'model': 'conflict_check_enabled',
+                                        'label': '启用下载冲突检查',
+                                        'hint': '自动解决订阅和刷流下载器的种子冲突'
+                                    }
+                                }]
+                            },
+                            {
+                                'component': 'VCol',
+                                'props': {'cols': 12, 'md': 4},
+                                'content': [{
+                                    'component': 'VSelect',
+                                    'props': {
+                                        'model': 'subscribe_downloader',
+                                        'label': '订阅下载器',
+                                        'items': downloader_options,
+                                        'hint': '用于订阅下载的下载器'
+                                    }
+                                }]
+                            },
+                            {
+                                'component': 'VCol',
+                                'props': {'cols': 12, 'md': 4},
+                                'content': [{
+                                    'component': 'VSelect',
+                                    'props': {
+                                        'model': 'brush_downloader',
+                                        'label': '刷流下载器',
+                                        'items': downloader_options,
+                                        'hint': '用于刷流的下载器'
+                                    }
+                                }]
+                            }
+                        ]
+                    },
                     # Telegram
                     {
                         'component': 'VRow',
@@ -1525,6 +1653,12 @@ class Enhanced115(_PluginBase):
             'strm_overwrite_mode': 'auto',
             'mediaserver_refresh_enabled': False,
             'mediaservers': [],
+            'cleanup_enabled': False,
+            'cleanup_interval': 600,
+            'cleanup_tag': '已整理',
+            'conflict_check_enabled': False,
+            'subscribe_downloader': '',
+            'brush_downloader': '',
             'telegram_enabled': False,
             'telegram_bot_token': '',
             'telegram_chat_id': ''
@@ -1802,6 +1936,22 @@ class Enhanced115(_PluginBase):
                 "kwargs": {
                     "seconds": self._scan_interval  # 使用配置的间隔时间
                 }
+            })
+        
+        # 如果启用了清理和重试功能，添加清理检查服务
+        if self._cleanup_enabled and self._cleanup_manager:
+            cleanup_kwargs = {"seconds": self._cleanup_interval}
+            # 如果启用了冲突检查，传递下载器参数
+            if self._conflict_check_enabled and self._subscribe_downloader and self._brush_downloader:
+                cleanup_kwargs["subscribe_downloader"] = self._subscribe_downloader
+                cleanup_kwargs["brush_downloader"] = self._brush_downloader
+            
+            services.append({
+                "id": "Enhanced115.cleanup_check",
+                "name": "检查并清理下载任务",
+                "trigger": "interval",
+                "func": self._cleanup_manager.check_and_cleanup,
+                "kwargs": cleanup_kwargs
             })
         
         return services
