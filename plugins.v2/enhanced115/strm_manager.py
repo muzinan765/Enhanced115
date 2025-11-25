@@ -207,13 +207,18 @@ class StrmManager:
                     result_queue.task_done()
             
             # 启动工作线程
+            logger.info(f"【Enhanced115】启动写入线程")
             writer_thread = Thread(target=writer_worker, daemon=True)
             writer_thread.start()
             
+            logger.info(f"【Enhanced115】启动收集线程")
             collector_thread = Thread(target=result_collector, daemon=True)
             collector_thread.start()
             
             # 递归遍历115（参考p115strmhelper的参数）
+            logger.info(f"【Enhanced115】开始遍历115目录，CID：{root_cid}")
+            
+            batch_count = 0
             for batch in batched(
                 iter_files_with_path(
                     self.client,
@@ -223,6 +228,8 @@ class StrmManager:
                 ),
                 1000  # 每批处理1000个文件
             ):
+                batch_count += 1
+                logger.info(f"【Enhanced115】处理第{batch_count}批文件，包含{len(batch)}个项目")
                 for item in batch:
                     stats['total'] += 1
                     
@@ -299,13 +306,20 @@ class StrmManager:
                     progress_callback(stats)
             
             # 等待队列完成
+            logger.info(f"【Enhanced115】遍历完成，开始等待写入队列完成，共处理{batch_count}批")
             write_queue.put(None)
+            logger.info(f"【Enhanced115】等待写入队列join...")
             write_queue.join()
+            logger.info(f"【Enhanced115】等待写入线程join...")
             writer_thread.join()
             
+            logger.info(f"【Enhanced115】等待结果队列join...")
             result_queue.put(None)
             result_queue.join()
+            logger.info(f"【Enhanced115】等待收集线程join...")
             collector_thread.join()
+            
+            logger.info(f"【Enhanced115】所有线程已完成")
             
             elapsed = perf_counter() - start_time
             logger.info(
