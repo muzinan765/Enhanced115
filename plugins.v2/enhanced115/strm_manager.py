@@ -176,35 +176,78 @@ class StrmManager:
             
             # 启动写入线程（参考p115strmhelper的writer_worker）
             def writer_worker():
-                while True:
-                    task = write_queue.get()
-                    if task is None:
-                        result_queue.put(None)
-                        break
-                    
-                    strm_path, fileid, pickcode = task
-                    try:
-                        if self.helper.generate_strm(strm_path, fileid, pickcode):
-                            result_queue.put(('success', strm_path))
-                        else:
+                logger.info(f"【Enhanced115】写入线程已启动")
+                task_count = 0
+                try:
+                    while True:
+                        logger.debug(f"【Enhanced115】写入线程等待任务...")
+                        task = write_queue.get()
+                        logger.debug(f"【Enhanced115】写入线程获取到任务：{task is not None}")
+                        
+                        if task is None:
+                            logger.info(f"【Enhanced115】写入线程收到结束信号，共处理{task_count}个任务")
+                            logger.info(f"【Enhanced115】写入线程发送结束信号到result_queue")
+                            result_queue.put(None)
+                            logger.info(f"【Enhanced115】写入线程准备退出")
+                            break
+                        
+                        task_count += 1
+                        strm_path, fileid, pickcode = task
+                        
+                        if task_count <= 5 or task_count % 10 == 0:
+                            logger.info(f"【Enhanced115】写入线程处理第{task_count}个文件：{strm_path.name}")
+                        
+                        try:
+                            logger.debug(f"【Enhanced115】调用generate_strm：{strm_path.name}")
+                            if self.helper.generate_strm(strm_path, fileid, pickcode):
+                                logger.debug(f"【Enhanced115】generate_strm成功：{strm_path.name}")
+                                result_queue.put(('success', strm_path))
+                            else:
+                                logger.debug(f"【Enhanced115】generate_strm失败：{strm_path.name}")
+                                result_queue.put(('failed', strm_path))
+                        except Exception as e:
+                            logger.error(f"【Enhanced115】写入线程异常：{strm_path.name}，{e}")
                             result_queue.put(('failed', strm_path))
-                    except Exception as e:
-                        result_queue.put(('failed', strm_path))
-                    finally:
-                        write_queue.task_done()
+                        finally:
+                            logger.debug(f"【Enhanced115】调用task_done")
+                            write_queue.task_done()
+                            logger.debug(f"【Enhanced115】task_done完成")
+                except Exception as e:
+                    logger.error(f"【Enhanced115】写入线程崩溃：{e}", exc_info=True)
+                finally:
+                    logger.info(f"【Enhanced115】写入线程退出")
             
             # 结果收集线程（参考p115strmhelper的result_collector）
             def result_collector():
-                while True:
-                    result = result_queue.get()
-                    if result is None:
-                        break
-                    status, path = result
-                    if status == 'success':
-                        stats['success'] += 1
-                    else:
-                        stats['failed'] += 1
-                    result_queue.task_done()
+                logger.info(f"【Enhanced115】收集线程已启动")
+                result_count = 0
+                try:
+                    while True:
+                        logger.debug(f"【Enhanced115】收集线程等待结果...")
+                        result = result_queue.get()
+                        logger.debug(f"【Enhanced115】收集线程获取到结果：{result}")
+                        
+                        if result is None:
+                            logger.info(f"【Enhanced115】收集线程收到结束信号，共收集{result_count}个结果")
+                            logger.info(f"【Enhanced115】收集线程准备退出")
+                            break
+                        
+                        result_count += 1
+                        status, path = result
+                        if status == 'success':
+                            stats['success'] += 1
+                        else:
+                            stats['failed'] += 1
+                        
+                        logger.debug(f"【Enhanced115】调用result task_done")
+                        result_queue.task_done()
+                        
+                        if result_count <= 5 or result_count % 10 == 0:
+                            logger.info(f"【Enhanced115】收集线程已收集{result_count}个结果（成功={stats['success']}, 失败={stats['failed']}）")
+                except Exception as e:
+                    logger.error(f"【Enhanced115】收集线程崩溃：{e}", exc_info=True)
+                finally:
+                    logger.info(f"【Enhanced115】收集线程退出")
             
             # 启动工作线程
             logger.info(f"【Enhanced115】启动写入线程")
@@ -230,6 +273,8 @@ class StrmManager:
             ):
                 batch_count += 1
                 logger.info(f"【Enhanced115】处理第{batch_count}批文件，包含{len(batch)}个项目")
+                
+                valid_items = 0
                 for item in batch:
                     stats['total'] += 1
                     
@@ -247,12 +292,16 @@ class StrmManager:
                         # 验证pickcode
                         if not pickcode:
                             stats['skipped'] += 1
+                            logger.debug(f"【Enhanced115】跳过（无pickcode）：{item_path}")
                             continue
                         
                         # 路径过滤
                         if not item_path.startswith(pan_media_dir):
                             stats['skipped'] += 1
+                            logger.debug(f"【Enhanced115】跳过（路径不匹配）：{item_path}")
                             continue
+                        
+                        valid_items += 1
                         
                         # 计算strm路径
                         path_obj = Path(item_path)
@@ -295,11 +344,14 @@ class StrmManager:
                                     continue
                         
                         # 加入写入队列
+                        logger.debug(f"【Enhanced115】加入写入队列：{strm_path.name}")
                         write_queue.put((strm_path, fileid, pickcode))
                         
                     except Exception as e:
                         logger.error(f"【Enhanced115】处理文件失败：{e}")
                         stats['failed'] += 1
+                
+                logger.info(f"【Enhanced115】第{batch_count}批处理完成，有效文件{valid_items}个，已加入写入队列")
                 
                 # 进度回调
                 if progress_callback:
