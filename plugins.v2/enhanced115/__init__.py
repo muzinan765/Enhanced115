@@ -151,9 +151,13 @@ class Enhanced115(_PluginBase):
         self._emby_local_path = config.get("emby_local_path", "/Emby")
         self._strm_overwrite_mode = config.get("strm_overwrite_mode", "auto")
         self._mediaserver_refresh_enabled = config.get("mediaserver_refresh_enabled", False)
-        # 解析媒体服务器列表（逗号分隔）
-        mediaservers_str = config.get("mediaservers", "")
-        self._mediaservers = [s.strip() for s in mediaservers_str.split(",") if s.strip()]
+        # 解析媒体服务器列表（VSelect多选返回数组）
+        mediaservers_value = config.get("mediaservers", [])
+        if isinstance(mediaservers_value, list):
+            self._mediaservers = mediaservers_value
+        else:
+            # 兼容旧配置（字符串格式）
+            self._mediaservers = [s.strip() for s in str(mediaservers_value).split(",") if s.strip()]
         
         # 停止旧服务
         self.stop_service()
@@ -1063,6 +1067,15 @@ class Enhanced115(_PluginBase):
 
     def get_form(self) -> Tuple[List[dict], Dict[str, Any]]:
         """拼装插件配置页面"""
+        # 获取所有媒体服务器配置（参考p115strmhelper）
+        from app.helper.mediaserver import MediaServerHelper
+        
+        mediaserver_helper = MediaServerHelper()
+        mediaserver_options = [
+            {"title": config.name, "value": config.name}
+            for config in mediaserver_helper.get_configs().values()
+        ]
+        
         return [
             {
                 'component': 'VForm',
@@ -1434,11 +1447,14 @@ class Enhanced115(_PluginBase):
                                 'component': 'VCol',
                                 'props': {'cols': 12, 'md': 6},
                                 'content': [{
-                                    'component': 'VTextField',
+                                    'component': 'VSelect',
                                     'props': {
                                         'model': 'mediaservers',
-                                        'label': '媒体服务器列表',
-                                        'hint': '多个服务器用逗号分隔，如：Emby,Plex'
+                                        'label': '媒体服务器',
+                                        'items': mediaserver_options,
+                                        'multiple': True,
+                                        'chips': True,
+                                        'hint': '选择要刷新的媒体服务器（可多选）'
                                     }
                                 }]
                             }
@@ -1508,7 +1524,7 @@ class Enhanced115(_PluginBase):
             'emby_local_path': '/Emby',
             'strm_overwrite_mode': 'auto',
             'mediaserver_refresh_enabled': False,
-            'mediaservers': '',
+            'mediaservers': [],
             'telegram_enabled': False,
             'telegram_bot_token': '',
             'telegram_chat_id': ''
