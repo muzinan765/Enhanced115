@@ -45,6 +45,8 @@ class CleanupManager:
         :param subscribe_downloader: 订阅下载器名称
         :param brush_downloader: 刷流下载器名称
         """
+        logger.info(f"【Enhanced115】清理检查服务已触发，订阅下载器：{subscribe_downloader}，刷流下载器：{brush_downloader}")
+        
         # 如果配置了下载冲突解决，优先处理
         if subscribe_downloader and brush_downloader:
             try:
@@ -53,6 +55,7 @@ class CleanupManager:
                 logger.error(f"【Enhanced115】解决下载冲突异常：{e}")
         
         if not self._pending_hashes:
+            logger.debug("【Enhanced115】清理检查队列为空")
             return
         
         logger.info(f"【Enhanced115】开始检查{len(self._pending_hashes)}个下载任务...")
@@ -181,17 +184,9 @@ class CleanupManager:
             return False
         
         try:
-            from app.modules.qbittorrent import Qbittorrent
-            
-            qb = Qbittorrent()
-            server = qb.get_instance(downloader)
-            
-            if not server:
-                logger.warning(f"【Enhanced115】获取下载器实例失败：{downloader}")
-                return False
-            
-            # 获取种子信息
-            torrents, _ = server.get_torrents(ids=download_hash)
+            # 使用ChainBase获取种子信息（遵循MoviePilot规范）
+            chain = ChainBase()
+            torrents, _ = chain.get_torrents(ids=download_hash, downloader=downloader)
             
             if not torrents:
                 logger.debug(f"【Enhanced115】未找到种子：{download_hash}")
@@ -221,10 +216,11 @@ class CleanupManager:
             return False
         
         try:
-            from app.modules.qbittorrent import Qbittorrent
+            # 使用模块类访问下载器（遵循MoviePilot规范）
+            from app.modules.qbittorrent import QbittorrentModule
             
-            qb = Qbittorrent()
-            server = qb.get_instance(downloader)
+            qb_module = QbittorrentModule()
+            server = qb_module.get_instance(downloader)
             
             if not server:
                 logger.warning(f"【Enhanced115】获取下载器实例失败：{downloader}")
@@ -255,25 +251,13 @@ class CleanupManager:
         :param brush_downloader_name: 刷流下载器名称
         """
         try:
-            from app.modules.qbittorrent import Qbittorrent
-            
-            qb = Qbittorrent()
-            
-            # 获取订阅下载器实例
-            subscribe_server = qb.get_instance(subscribe_downloader_name)
-            if not subscribe_server:
-                logger.warning(f"【Enhanced115】获取订阅下载器实例失败：{subscribe_downloader_name}")
-                return
-            
-            # 获取刷流下载器实例
-            brush_server = qb.get_instance(brush_downloader_name)
-            if not brush_server:
-                logger.warning(f"【Enhanced115】获取刷流下载器实例失败：{brush_downloader_name}")
-                return
+            # 使用ChainBase获取种子信息（遵循MoviePilot规范）
+            chain = ChainBase()
             
             # 获取订阅下载器中的所有种子
-            subscribe_torrents, _ = subscribe_server.get_torrents()
-            if not subscribe_torrents:
+            subscribe_torrents, error = chain.get_torrents(downloader=subscribe_downloader_name)
+            if error or not subscribe_torrents:
+                logger.debug(f"【Enhanced115】获取订阅下载器种子失败或为空：{subscribe_downloader_name}")
                 return
             
             # 检查每个种子的tracker消息
@@ -295,12 +279,12 @@ class CleanupManager:
                 torrent_name = conflict_torrent.get('name', 'Unknown')
                 
                 # 检查刷流下载器是否存在相同hash的种子
-                brush_torrents, _ = brush_server.get_torrents(ids=torrent_hash)
+                brush_torrents, _ = chain.get_torrents(ids=torrent_hash, downloader=brush_downloader_name)
                 if brush_torrents:
                     logger.info(f"【Enhanced115】发现刷流下载器存在冲突种子：{torrent_name} ({torrent_hash[:8]}...)，准备删除...")
                     
-                    # 删除刷流下载器的种子和文件
-                    result = ChainBase().remove_torrents(
+                    # 删除刷流下载器的种子和文件（使用ChainBase）
+                    result = chain.remove_torrents(
                         hashs=torrent_hash,
                         delete_file=True,
                         downloader=brush_downloader_name
