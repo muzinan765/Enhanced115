@@ -4,9 +4,13 @@ STRM文件管理工具
 """
 import re
 from pathlib import Path
-from typing import Optional, List, Tuple
+from typing import Optional, List, Tuple, Dict
 
 from app.log import logger
+from app.helper.mediaserver import MediaServerHelper
+from app.schemas import RefreshMediaItem, MediaInfo, ServiceInfo
+from app.core.metainfo import MetaInfoPath
+from app.chain.media import MediaChain
 
 VIDEO_EXTS = {'.mkv', '.mp4', '.avi', '.ts', '.m2ts', '.iso'}
 SUBTITLE_EXTS = {
@@ -18,14 +22,26 @@ SUBTITLE_EXTS = {
 class StrmHelper:
     """STRM文件管理类"""
     
-    @staticmethod
-    def generate_strm(strm_path: Path, fileid: str, pickcode: str) -> bool:
+    def __init__(self, mediaserver_refresh_enabled: bool = False, 
+                 mediaservers: Optional[List[str]] = None):
+        """
+        初始化StrmHelper
+        
+        :param mediaserver_refresh_enabled: 是否启用媒体服务器刷新
+        :param mediaservers: 要刷新的媒体服务器列表
+        """
+        self.mediaserver_refresh_enabled = mediaserver_refresh_enabled
+        self.mediaservers = mediaservers or []
+    
+    def generate_strm(self, strm_path: Path, fileid: str, pickcode: str, 
+                     trigger_refresh: bool = False) -> bool:
         """
         生成strm文件
         
         :param strm_path: strm文件路径
         :param fileid: 115文件ID
         :param pickcode: 115提取码
+        :param trigger_refresh: 是否触发媒体服务器刷新
         :return: 是否成功
         """
         try:
@@ -37,11 +53,97 @@ class StrmHelper:
             strm_path.write_text(content, encoding='utf-8')
             
             logger.info(f"【Enhanced115】已生成strm文件：{strm_path.name}")
+            
+            # 触发媒体服务器刷新（参考p115strmhelper）
+            if trigger_refresh and self.mediaserver_refresh_enabled:
+                self.refresh_mediaserver(
+                    file_path=str(strm_path),
+                    file_name=strm_path.name
+                )
+            
             return True
             
         except Exception as e:
             logger.error(f"【Enhanced115】生成strm文件失败：{strm_path}，错误：{e}")
             return False
+    
+    def refresh_mediaserver(self, file_path: str, file_name: str, 
+                           mediainfo: Optional[MediaInfo] = None):
+        """
+        刷新媒体服务器（完全参考p115strmhelper的实现）
+        
+        :param file_path: strm文件路径
+        :param file_name: 文件名
+        :param mediainfo: 媒体信息（可选）
+        """
+        if not self.mediaserver_refresh_enabled:
+            return
+        
+        if not self.mediaservers:
+            logger.debug("【Enhanced115】未配置媒体服务器，跳过刷新")
+            return
+        
+        try:
+            # 获取媒体服务器实例
+            mediaserver_helper = MediaServerHelper()
+            services = mediaserver_helper.get_services(name_filters=self.mediaservers)
+            
+            if not services:
+                logger.warning("【Enhanced115】获取媒体服务器实例失败")
+                return
+            
+            # 过滤未连接的服务器
+            active_services: Dict[str, ServiceInfo] = {}
+            for service_name, service_info in services.items():
+                if service_info.instance.is_inactive():
+                    logger.warning(f"【Enhanced115】媒体服务器 {service_name} 未连接")
+                else:
+                    active_services[service_name] = service_info
+            
+            if not active_services:
+                logger.warning("【Enhanced115】没有已连接的媒体服务器")
+                return
+            
+            logger.info(f"【Enhanced115】开始刷新媒体服务器：{file_name}")
+            
+            # 识别媒体信息
+            if not mediainfo:
+                media_chain = MediaChain()
+                meta = MetaInfoPath(path=Path(file_path))
+                mediainfo = media_chain.recognize_media(meta=meta)
+                if not mediainfo:
+                    logger.warning(f"【Enhanced115】{file_name} 无法识别媒体信息，尝试刷新根目录")
+                    # 无法识别时刷新根目录
+                    for name, service in active_services.items():
+                        if hasattr(service.instance, "refresh_root_library"):
+                            service.instance.refresh_root_library()
+                            logger.info(f"【Enhanced115】已触发 {name} 刷新根目录")
+                    return
+            
+            # 构建刷新项（参考p115strmhelper）
+            items = [
+                RefreshMediaItem(
+                    title=mediainfo.title,
+                    year=mediainfo.year,
+                    type=mediainfo.type,
+                    category=mediainfo.category,
+                    target_path=Path(file_path),
+                )
+            ]
+            
+            # 触发刷新
+            for name, service in active_services.items():
+                if hasattr(service.instance, "refresh_library_by_items"):
+                    service.instance.refresh_library_by_items(items)
+                    logger.info(f"【Enhanced115】已触发 {name} 刷新媒体库")
+                elif hasattr(service.instance, "refresh_root_library"):
+                    service.instance.refresh_root_library()
+                    logger.info(f"【Enhanced115】已触发 {name} 刷新根目录")
+                else:
+                    logger.warning(f"【Enhanced115】{name} 不支持刷新")
+                    
+        except Exception as e:
+            logger.error(f"【Enhanced115】刷新媒体服务器失败：{e}")
     
     @staticmethod
     def read_strm(strm_path: Path) -> Optional[Tuple[str, str]]:

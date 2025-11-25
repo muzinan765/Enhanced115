@@ -3,7 +3,7 @@ STRM文件管理器
 独立管理strm文件的生成、洗版、清理等功能
 """
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List
 from queue import Queue
 from threading import Thread
 try:
@@ -37,18 +37,26 @@ from .strm_helper import StrmHelper, SUBTITLE_EXTS
 class StrmManager:
     """STRM文件管理器"""
     
-    def __init__(self, client, emby_local_path: str = "/Emby", overwrite_mode: str = "auto"):
+    def __init__(self, client, emby_local_path: str = "/Emby", overwrite_mode: str = "auto",
+                 mediaserver_refresh_enabled: bool = False, mediaservers: Optional[List[str]] = None):
         """
         初始化STRM管理器
         
         :param client: p115client实例
         :param emby_local_path: 本地Emby目录路径
         :param overwrite_mode: 覆盖模式（never/always/auto）
+        :param mediaserver_refresh_enabled: 是否启用媒体服务器刷新
+        :param mediaservers: 要刷新的媒体服务器列表
         """
         self.client = client
         self.emby_local_path = Path(emby_local_path)
         self.overwrite_mode = overwrite_mode
-        self.helper = StrmHelper()
+        self.mediaserver_refresh_enabled = mediaserver_refresh_enabled
+        self.mediaservers = mediaservers or []
+        self.helper = StrmHelper(
+            mediaserver_refresh_enabled=mediaserver_refresh_enabled,
+            mediaservers=mediaservers
+        )
     
     def handle_upload_success(self, local_path: Path, remote_path: str, 
                               file_info: dict, is_movie: bool) -> bool:
@@ -88,7 +96,7 @@ class StrmManager:
             
             # 视频：生成strm文件
             strm_path = target_path.with_suffix(target_path.suffix + '.strm')
-            return self.helper.generate_strm(strm_path, fileid, pickcode)
+            return self.helper.generate_strm(strm_path, fileid, pickcode, trigger_refresh=True)
             
         except Exception as e:
             logger.error(f"【Enhanced115】处理上传后strm生成失败：{e}")
@@ -199,7 +207,8 @@ class StrmManager:
                         
                         try:
                             logger.debug(f"【Enhanced115】调用generate_strm：{strm_path.name}")
-                            if self.helper.generate_strm(strm_path, fileid, pickcode):
+                            # 全量同步时触发刷新
+                            if self.helper.generate_strm(strm_path, fileid, pickcode, trigger_refresh=True):
                                 logger.debug(f"【Enhanced115】generate_strm成功：{strm_path.name}")
                                 result_queue.put(('success', strm_path))
                             else:

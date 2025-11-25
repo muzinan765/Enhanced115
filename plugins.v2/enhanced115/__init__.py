@@ -87,6 +87,8 @@ class Enhanced115(_PluginBase):
         self._strm_enabled = False  # 是否启用strm管理
         self._emby_local_path = "/Emby"  # 本地Emby目录路径
         self._strm_overwrite_mode = "auto"  # strm覆盖模式：never/always/auto
+        self._mediaserver_refresh_enabled = False  # 是否启用媒体服务器刷新
+        self._mediaservers = []  # 要刷新的媒体服务器列表
         
         # 处理器
         self._p115_client = None
@@ -148,6 +150,10 @@ class Enhanced115(_PluginBase):
         self._strm_enabled = config.get("strm_enabled", False)
         self._emby_local_path = config.get("emby_local_path", "/Emby")
         self._strm_overwrite_mode = config.get("strm_overwrite_mode", "auto")
+        self._mediaserver_refresh_enabled = config.get("mediaserver_refresh_enabled", False)
+        # 解析媒体服务器列表（逗号分隔）
+        mediaservers_str = config.get("mediaservers", "")
+        self._mediaservers = [s.strip() for s in mediaservers_str.split(",") if s.strip()]
         
         # 停止旧服务
         self.stop_service()
@@ -195,9 +201,13 @@ class Enhanced115(_PluginBase):
                 self._strm_manager = StrmManager(
                     self._p115_client,
                     self._emby_local_path,
-                    self._strm_overwrite_mode
+                    self._strm_overwrite_mode,
+                    self._mediaserver_refresh_enabled,
+                    self._mediaservers
                 )
                 logger.info("【Enhanced115】STRM管理器已初始化")
+                if self._mediaserver_refresh_enabled:
+                    logger.info(f"【Enhanced115】媒体服务器刷新已启用，目标服务器：{self._mediaservers}")
             
             # 启动上传队列
             self._start_upload_workers()
@@ -1396,6 +1406,35 @@ class Enhanced115(_PluginBase):
                             }]
                         }]
                     },
+                    {
+                        'component': 'VRow',
+                        'content': [
+                            {
+                                'component': 'VCol',
+                                'props': {'cols': 12, 'md': 6},
+                                'content': [{
+                                    'component': 'VSwitch',
+                                    'props': {
+                                        'model': 'mediaserver_refresh_enabled',
+                                        'label': '启用媒体服务器刷新',
+                                        'hint': '生成strm后自动触发Emby/Plex/Jellyfin扫描'
+                                    }
+                                }]
+                            },
+                            {
+                                'component': 'VCol',
+                                'props': {'cols': 12, 'md': 6},
+                                'content': [{
+                                    'component': 'VTextField',
+                                    'props': {
+                                        'model': 'mediaservers',
+                                        'label': '媒体服务器列表',
+                                        'hint': '多个服务器用逗号分隔，如：Emby,Plex'
+                                    }
+                                }]
+                            }
+                        ]
+                    },
                     # Telegram
                     {
                         'component': 'VRow',
@@ -1459,6 +1498,8 @@ class Enhanced115(_PluginBase):
             'strm_enabled': False,
             'emby_local_path': '/Emby',
             'strm_overwrite_mode': 'auto',
+            'mediaserver_refresh_enabled': False,
+            'mediaservers': '',
             'telegram_enabled': False,
             'telegram_bot_token': '',
             'telegram_chat_id': ''
