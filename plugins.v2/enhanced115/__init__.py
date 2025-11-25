@@ -1838,14 +1838,14 @@ class Enhanced115(_PluginBase):
             "methods": ["POST"],
             "summary": "全量同步115到STRM",
             "description": "扫描115指定目录，生成本地strm映射文件",
-            "auth": "bear"
+            "auth": "apikey"
         }, {
             "path": "/test_notifications",
             "endpoint": self.test_system_notifications,
             "methods": ["GET"],
             "summary": "测试115系统通知API",
             "description": "测试是否能获取到分享违规等系统消息",
-            "auth": "bear"
+            "auth": "apikey"
         }]
     
     def test_system_notifications(self) -> dict:
