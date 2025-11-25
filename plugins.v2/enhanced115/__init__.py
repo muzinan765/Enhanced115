@@ -1839,7 +1839,100 @@ class Enhanced115(_PluginBase):
             "summary": "全量同步115到STRM",
             "description": "扫描115指定目录，生成本地strm映射文件",
             "auth": "bear"
+        }, {
+            "path": "/test_notifications",
+            "endpoint": self.test_system_notifications,
+            "methods": ["GET"],
+            "summary": "测试115系统通知API",
+            "description": "测试是否能获取到分享违规等系统消息",
+            "auth": "bear"
         }]
+    
+    def test_system_notifications(self) -> dict:
+        """
+        测试115系统通知API
+        用于验证是否能获取到分享违规等系统消息
+        """
+        logger.info("【Enhanced115】开始测试系统通知API")
+        
+        if not self._p115_client:
+            error_msg = "P115客户端未初始化"
+            logger.error(f"【Enhanced115】{error_msg}")
+            return {"success": False, "message": error_msg}
+        
+        results = {}
+        
+        try:
+            logger.info("【Enhanced115】测试1: msg_contacts_notice()")
+            resp1 = self._p115_client.msg_contacts_notice()
+            results["msg_contacts_notice"] = resp1
+            logger.info(f"【Enhanced115】msg_contacts_notice 返回: {resp1}")
+            
+            logger.info("【Enhanced115】测试2: msg_contacts_ls(t=1, limit=50)")
+            resp2 = self._p115_client.msg_contacts_ls({
+                "limit": 50,
+                "skip": 0,
+                "t": 1
+            })
+            results["msg_contacts_ls_t1"] = resp2
+            logger.info(f"【Enhanced115】msg_contacts_ls(t=1) 返回数据量: {len(str(resp2))} 字符")
+            
+            if resp2.get("state"):
+                msg_list = resp2.get("data", {}).get("list", [])
+                logger.info(f"【Enhanced115】获取到 {len(msg_list)} 条消息")
+                
+                violation_keywords = ["违规", "删除", "分享的文件", "已被", "屏蔽"]
+                violation_msgs = []
+                
+                for msg in msg_list:
+                    msg_str = str(msg)
+                    if any(kw in msg_str for kw in violation_keywords):
+                        violation_msgs.append(msg)
+                        logger.warning(f"【Enhanced115】发现可能的违规消息: {msg}")
+                
+                results["violation_count"] = len(violation_msgs)
+                results["violation_messages"] = violation_msgs
+                results["total_messages"] = len(msg_list)
+                
+                logger.info(f"【Enhanced115】在 {len(msg_list)} 条消息中发现 {len(violation_msgs)} 条可能的违规消息")
+            
+            logger.info("【Enhanced115】测试3: msg_contacts_ls(t=0, limit=20)")
+            resp3 = self._p115_client.msg_contacts_ls({
+                "limit": 20,
+                "skip": 0,
+                "t": 0
+            })
+            results["msg_contacts_ls_t0"] = resp3
+            logger.info(f"【Enhanced115】msg_contacts_ls(t=0) 返回数据量: {len(str(resp3))} 字符")
+            
+            if self._telegram:
+                summary = (
+                    f"115通知API测试完成\n\n"
+                    f"总消息数: {results.get('total_messages', 0)}\n"
+                    f"违规消息: {results.get('violation_count', 0)}\n\n"
+                    f"详细结果请查看MoviePilot日志"
+                )
+                self._telegram.send_message(summary)
+                logger.info("【Enhanced115】已发送Telegram通知")
+            
+            return {
+                "success": True,
+                "message": "测试完成，请查看日志获取详细信息",
+                "summary": {
+                    "total_messages": results.get("total_messages", 0),
+                    "violation_count": results.get("violation_count", 0)
+                },
+                "results": results
+            }
+            
+        except Exception as e:
+            error_msg = f"测试失败: {str(e)}"
+            logger.error(f"【Enhanced115】{error_msg}", exc_info=True)
+            return {
+                "success": False,
+                "message": error_msg,
+                "results": results
+            }
     
     def strm_full_sync(self, root_cid: str = None, scope: str = "both") -> dict:
         """
