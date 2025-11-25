@@ -255,6 +255,10 @@ class Enhanced115(_PluginBase):
             if self._task_manager:
                 self._task_manager.clear_uploading_on_startup()
             
+            # 测试系统通知API
+            logger.info("【Enhanced115】开始测试系统通知API...")
+            self.test_system_notifications()
+            
             logger.info("【Enhanced115】插件初始化完成（完全集成my_115_app逻辑）")
             
         except Exception as e:
