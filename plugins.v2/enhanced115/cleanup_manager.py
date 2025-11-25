@@ -9,6 +9,7 @@ from pathlib import Path
 from app.log import logger
 from app.db.transferhistory_oper import TransferHistoryOper
 from app.chain import ChainBase
+from app.helper.downloader import DownloaderHelper
 
 
 class CleanupManager:
@@ -25,6 +26,9 @@ class CleanupManager:
         self._cleanup_tag = cleanup_tag
         self._pending_hashes: Set[str] = set()  # 待检查的download_hash集合
         self._last_check_time: Dict[str, float] = {}  # 记录每个hash的最后检查时间
+        
+        # 初始化下载器助手（遵循MoviePilot规范）
+        self._downloader_helper = DownloaderHelper()
         
     def add_to_check_queue(self, download_hash: str):
         """
@@ -172,6 +176,23 @@ class CleanupManager:
         except Exception as e:
             logger.error(f"【Enhanced115】触发重试异常：{download_hash}，错误：{e}")
     
+    def _get_downloader_instance(self, downloader_name: str):
+        """
+        获取下载器实例（遵循MoviePilot规范）
+        
+        :param downloader_name: 下载器名称
+        :return: 下载器实例，失败返回None
+        """
+        if not downloader_name:
+            return None
+        
+        service_info = self._downloader_helper.get_service(downloader_name)
+        if service_info and service_info.instance:
+            return service_info.instance
+        
+        logger.debug(f"【Enhanced115】未找到下载器：{downloader_name}")
+        return None
+    
     def _has_finished_tag(self, download_hash: str, downloader: Optional[str]) -> bool:
         """
         检查种子是否有"已整理"标签
@@ -184,11 +205,8 @@ class CleanupManager:
             return False
         
         try:
-            # 使用模块类获取种子信息（遵循MoviePilot规范）
-            from app.modules.qbittorrent import QbittorrentModule
-            
-            qb_module = QbittorrentModule()
-            server = qb_module.get_instance(downloader)
+            # 使用DownloaderHelper获取下载器实例（遵循MoviePilot规范）
+            server = self._get_downloader_instance(downloader)
             
             if not server:
                 logger.debug(f"【Enhanced115】获取下载器实例失败：{downloader}")
@@ -225,11 +243,8 @@ class CleanupManager:
             return False
         
         try:
-            # 使用模块类访问下载器（遵循MoviePilot规范）
-            from app.modules.qbittorrent import QbittorrentModule
-            
-            qb_module = QbittorrentModule()
-            server = qb_module.get_instance(downloader)
+            # 使用DownloaderHelper获取下载器实例（遵循MoviePilot规范）
+            server = self._get_downloader_instance(downloader)
             
             if not server:
                 logger.warning(f"【Enhanced115】获取下载器实例失败：{downloader}")
@@ -260,19 +275,16 @@ class CleanupManager:
         :param brush_downloader_name: 刷流下载器名称
         """
         try:
-            # 使用模块类获取种子信息（遵循MoviePilot规范）
-            from app.modules.qbittorrent import QbittorrentModule
-            
-            qb_module = QbittorrentModule()
+            # 使用DownloaderHelper获取下载器实例（遵循MoviePilot规范）
             
             # 获取订阅下载器实例
-            subscribe_server = qb_module.get_instance(subscribe_downloader_name)
+            subscribe_server = self._get_downloader_instance(subscribe_downloader_name)
             if not subscribe_server:
                 logger.debug(f"【Enhanced115】获取订阅下载器实例失败：{subscribe_downloader_name}")
                 return
             
             # 获取刷流下载器实例
-            brush_server = qb_module.get_instance(brush_downloader_name)
+            brush_server = self._get_downloader_instance(brush_downloader_name)
             if not brush_server:
                 logger.debug(f"【Enhanced115】获取刷流下载器实例失败：{brush_downloader_name}")
                 return
