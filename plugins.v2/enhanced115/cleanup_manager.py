@@ -232,7 +232,7 @@ class CleanupManager:
             
             # 删除标签
             server.remove_torrents_tag(ids=download_hash, tag=[self._cleanup_tag])
-            logger.info(f"【Enhanced115】已删除"{self._cleanup_tag}"标签：{download_hash}")
+            logger.info(f"【Enhanced115】已删除'{self._cleanup_tag}'标签：{download_hash}")
             return True
             
         except Exception as e:
