@@ -281,7 +281,7 @@ class CleanupManager:
             for torrent in subscribe_torrents:
                 tracker_msg = torrent.get('tracker_msg', '').lower()
                 # 检查tracker消息是否包含冲突关键词
-                if any(keyword in tracker_msg for keyword in ['torrent already exists', 'already downloading', 'duplicate torrent']):
+                if 'same torrent' in tracker_msg:
                     conflict_torrents.append(torrent)
             
             if not conflict_torrents:
