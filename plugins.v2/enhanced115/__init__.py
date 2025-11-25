@@ -1624,45 +1624,70 @@ class Enhanced115(_PluginBase):
         :param root_cid: 115根目录CID（可选，默认使用tv_root_cid）
         :return: 同步结果
         """
+        logger.info(f"【Enhanced115】全量同步API被调用，参数：root_cid={root_cid}, scope={scope}")
+        
         if not self._strm_enabled:
+            logger.warning("【Enhanced115】STRM功能未启用")
             return {"success": False, "message": "STRM功能未启用"}
         
         if not self._strm_manager:
+            logger.warning("【Enhanced115】STRM管理器未初始化")
             return {"success": False, "message": "STRM管理器未初始化"}
+        
+        # 调试：输出配置的CID
+        logger.info(f"【Enhanced115】配置 - 电影CID：{self._movie_root_cid}")
+        logger.info(f"【Enhanced115】配置 - 电视剧CID：{self._tv_root_cid}")
         
         roots = []
         scope = (scope or "both").lower()
+        logger.info(f"【Enhanced115】scope标准化后：{scope}")
+        
         if root_cid:
             roots = [root_cid]
+            logger.info(f"【Enhanced115】使用指定CID：{root_cid}")
         else:
             if scope in ("both", "movie"):
                 if self._movie_root_cid:
                     roots.append(self._movie_root_cid)
+                    logger.info(f"【Enhanced115】添加电影CID到roots：{self._movie_root_cid}")
+                else:
+                    logger.warning("【Enhanced115】电影CID未配置")
             if scope in ("both", "tv"):
                 if self._tv_root_cid:
                     roots.append(self._tv_root_cid)
+                    logger.info(f"【Enhanced115】添加电视剧CID到roots：{self._tv_root_cid}")
+                else:
+                    logger.warning("【Enhanced115】电视剧CID未配置")
+        
+        logger.info(f"【Enhanced115】最终roots列表：{roots}，长度：{len(roots)}")
         
         if not roots:
+            logger.error("【Enhanced115】roots列表为空，无法同步")
             return {"success": False, "message": "未配置根目录CID"}
         
         aggregated = {'total': 0, 'success': 0, 'failed': 0, 'skipped': 0}
         details = []
         errors = []
         
-        for cid in roots:
+        logger.info(f"【Enhanced115】开始循环处理{len(roots)}个根目录")
+        
+        for idx, cid in enumerate(roots, 1):
+            logger.info(f"【Enhanced115】正在处理第{idx}/{len(roots)}个目录，CID：{cid}")
             try:
                 stats = self._strm_manager.full_sync(
                     root_cid=cid,
                     target_dir=self._emby_local_path,
                     pan_media_dir="/Emby"
                 )
+                logger.info(f"【Enhanced115】CID {cid} 同步完成，stats：{stats}")
                 details.append({'cid': cid, 'stats': stats})
                 for key in aggregated:
                     aggregated[key] += stats.get(key, 0)
             except Exception as e:
-                logger.error(f"【Enhanced115】全量同步子任务失败，CID={cid}，错误：{e}")
+                logger.error(f"【Enhanced115】全量同步子任务失败，CID={cid}，错误：{e}", exc_info=True)
                 errors.append({'cid': cid, 'error': str(e)})
         
+        logger.info(f"【Enhanced115】循环处理完成，开始输出汇总")
         logger.info(
             f"【Enhanced115】全量同步汇总 | 目录数={len(roots)} | "
             f"总数={aggregated['total']} | 成功={aggregated['success']} | "
@@ -1671,13 +1696,17 @@ class Enhanced115(_PluginBase):
         
         success = not errors
         message = "同步完成" if success else "部分目录同步失败"
-        return {
+        
+        result = {
             "success": success,
             "message": message,
             "stats": aggregated,
             "details": details,
             "errors": errors
         }
+        
+        logger.info(f"【Enhanced115】全量同步API返回结果：{result}")
+        return result
 
     def get_service(self) -> List[Dict[str, Any]]:
         """

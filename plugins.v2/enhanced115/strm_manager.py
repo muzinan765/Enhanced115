@@ -156,6 +156,11 @@ class StrmManager:
         :param progress_callback: 进度回调函数
         :return: 同步结果统计
         """
+        logger.info(f"【Enhanced115】full_sync方法被调用")
+        logger.info(f"【Enhanced115】参数 - root_cid：{root_cid}")
+        logger.info(f"【Enhanced115】参数 - target_dir：{target_dir}")
+        logger.info(f"【Enhanced115】参数 - pan_media_dir：{pan_media_dir}")
+        
         try:
             from p115client.tool.iterdir import iter_files_with_path
             
@@ -309,9 +314,11 @@ class StrmManager:
                 f"失败={stats['failed']} | 跳过={stats['skipped']} | 耗时={elapsed:.1f}秒"
             )
             
+            logger.info(f"【Enhanced115】full_sync方法返回，stats：{stats}")
             return stats
             
         except Exception as e:
-            logger.error(f"【Enhanced115】全量同步异常：{e}")
+            logger.error(f"【Enhanced115】全量同步异常：{e}", exc_info=True)
+            logger.info(f"【Enhanced115】full_sync方法异常返回")
             return {'total': 0, 'success': 0, 'failed': 0, 'skipped': 0}
 
