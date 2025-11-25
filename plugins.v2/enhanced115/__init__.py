@@ -1940,18 +1940,19 @@ class Enhanced115(_PluginBase):
         
         # 如果启用了清理和重试功能，添加清理检查服务
         if self._cleanup_enabled and self._cleanup_manager:
-            cleanup_kwargs = {"seconds": self._cleanup_interval}
-            # 如果启用了冲突检查，传递下载器参数
+            # 构建函数参数
+            func_kwargs = {}
             if self._conflict_check_enabled and self._subscribe_downloader and self._brush_downloader:
-                cleanup_kwargs["subscribe_downloader"] = self._subscribe_downloader
-                cleanup_kwargs["brush_downloader"] = self._brush_downloader
+                func_kwargs["subscribe_downloader"] = self._subscribe_downloader
+                func_kwargs["brush_downloader"] = self._brush_downloader
             
             services.append({
                 "id": "Enhanced115.cleanup_check",
                 "name": "检查并清理下载任务",
                 "trigger": "interval",
                 "func": self._cleanup_manager.check_and_cleanup,
-                "kwargs": cleanup_kwargs
+                "kwargs": {"seconds": self._cleanup_interval},
+                "func_kwargs": func_kwargs
             })
         
         return services
