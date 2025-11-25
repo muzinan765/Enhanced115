@@ -182,12 +182,12 @@ class StrmHelper:
     @staticmethod
     def extract_episode_id(filename: str) -> Optional[str]:
         """
-        从文件名提取集数标识（SXXEXX格式）
+        从文件名提取集数标识（SXXEXX格式，支持多位数）
         
         :param filename: 文件名
-        :return: 集数标识（如S01E06）或None
+        :return: 集数标识（如S01E06或S01E297）或None
         """
-        match = re.search(r'S\d{2}E\d{2}', filename, re.IGNORECASE)
+        match = re.search(r'S\d+E\d+', filename, re.IGNORECASE)
         if match:
             return match.group().upper()
         return None
@@ -195,7 +195,7 @@ class StrmHelper:
     @staticmethod
     def find_old_strms(strm_dir: Path, episode_id: Optional[str], is_movie: bool) -> List[Path]:
         """
-        查找同目录下需要删除的旧strm文件
+        查找同目录下需要删除的旧strm文件（精确匹配集数，避免误删）
         
         :param strm_dir: strm文件所在目录
         :param episode_id: 集数标识（剧集）
@@ -211,7 +211,6 @@ class StrmHelper:
             for item in strm_dir.iterdir():
                 try:
                     suffix = item.suffix.lower()
-                    name_upper = item.name.upper()
                     
                     if suffix == '.strm':
                         name_without_strm = item.name[:-5]
@@ -221,14 +220,20 @@ class StrmHelper:
                         
                         if is_movie:
                             old_files.append(item)
-                        elif episode_id and episode_id in name_upper:
-                            old_files.append(item)
+                        elif episode_id:
+                            # 提取文件名中的集数标识，精确匹配而非包含关系
+                            file_episode_id = StrmHelper.extract_episode_id(item.name)
+                            if file_episode_id == episode_id:
+                                old_files.append(item)
                     
                     elif suffix in SUBTITLE_EXTS:
                         if is_movie:
                             old_files.append(item)
-                        elif episode_id and episode_id in name_upper:
-                            old_files.append(item)
+                        elif episode_id:
+                            # 字幕文件同样精确匹配集数
+                            file_episode_id = StrmHelper.extract_episode_id(item.name)
+                            if file_episode_id == episode_id:
+                                old_files.append(item)
                 except Exception as inner_err:
                     logger.debug(f"【Enhanced115】扫描目录时跳过文件：{item}，原因：{inner_err}")
                     continue
