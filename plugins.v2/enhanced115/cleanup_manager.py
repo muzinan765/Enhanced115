@@ -184,9 +184,18 @@ class CleanupManager:
             return False
         
         try:
-            # 使用ChainBase获取种子信息（遵循MoviePilot规范）
-            chain = ChainBase()
-            torrents, _ = chain.get_torrents(ids=download_hash, downloader=downloader)
+            # 使用模块类获取种子信息（遵循MoviePilot规范）
+            from app.modules.qbittorrent import QbittorrentModule
+            
+            qb_module = QbittorrentModule()
+            server = qb_module.get_instance(downloader)
+            
+            if not server:
+                logger.debug(f"【Enhanced115】获取下载器实例失败：{downloader}")
+                return False
+            
+            # 获取种子信息
+            torrents, _ = server.get_torrents(ids=download_hash)
             
             if not torrents:
                 logger.debug(f"【Enhanced115】未找到种子：{download_hash}")
@@ -251,11 +260,25 @@ class CleanupManager:
         :param brush_downloader_name: 刷流下载器名称
         """
         try:
-            # 使用ChainBase获取种子信息（遵循MoviePilot规范）
-            chain = ChainBase()
+            # 使用模块类获取种子信息（遵循MoviePilot规范）
+            from app.modules.qbittorrent import QbittorrentModule
+            
+            qb_module = QbittorrentModule()
+            
+            # 获取订阅下载器实例
+            subscribe_server = qb_module.get_instance(subscribe_downloader_name)
+            if not subscribe_server:
+                logger.debug(f"【Enhanced115】获取订阅下载器实例失败：{subscribe_downloader_name}")
+                return
+            
+            # 获取刷流下载器实例
+            brush_server = qb_module.get_instance(brush_downloader_name)
+            if not brush_server:
+                logger.debug(f"【Enhanced115】获取刷流下载器实例失败：{brush_downloader_name}")
+                return
             
             # 获取订阅下载器中的所有种子
-            subscribe_torrents, error = chain.get_torrents(downloader=subscribe_downloader_name)
+            subscribe_torrents, error = subscribe_server.get_torrents()
             if error or not subscribe_torrents:
                 logger.debug(f"【Enhanced115】获取订阅下载器种子失败或为空：{subscribe_downloader_name}")
                 return
@@ -279,12 +302,12 @@ class CleanupManager:
                 torrent_name = conflict_torrent.get('name', 'Unknown')
                 
                 # 检查刷流下载器是否存在相同hash的种子
-                brush_torrents, _ = chain.get_torrents(ids=torrent_hash, downloader=brush_downloader_name)
+                brush_torrents, _ = brush_server.get_torrents(ids=torrent_hash)
                 if brush_torrents:
                     logger.info(f"【Enhanced115】发现刷流下载器存在冲突种子：{torrent_name} ({torrent_hash[:8]}...)，准备删除...")
                     
                     # 删除刷流下载器的种子和文件（使用ChainBase）
-                    result = chain.remove_torrents(
+                    result = ChainBase().remove_torrents(
                         hashs=torrent_hash,
                         delete_file=True,
                         downloader=brush_downloader_name
