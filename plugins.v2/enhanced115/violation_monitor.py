@@ -208,14 +208,17 @@ class ViolationMonitor:
                 return None
             
             # 提取文件名信息（格式："东***.mkv" 或 "东***.mkv"）
-            # 匹配所有可能的引号类型：ASCII引号 " 和中文引号 " "
-            # 文件名可能包含星号等特殊字符，使用非贪婪匹配
-            file_match = re.search(r'["""]([^"""\n]+?\.\w+)["""]', content)
+            # 方法1：精确匹配"分享的文件"后面的引号对（使用反向引用确保引号匹配）
+            file_match = re.search(r'分享的文件(["""])([^"""]+?\.\w+)\1', content)
+            if not file_match:
+                # 方法2：如果精确匹配失败，尝试匹配任何引号对
+                file_match = re.search(r'(["""])([^"""]+?\.\w+)\1', content)
             if not file_match:
                 logger.warning(f"【Enhanced115】无法提取文件名，消息内容：{content}")
                 return None
             
-            file_name = file_match.group(1)
+            # group(1)是引号字符，group(2)是文件名
+            file_name = file_match.group(2)
             logger.debug(f"【Enhanced115】提取到文件名：{file_name[:50]}...")
             
             # 提取首字和扩展名
