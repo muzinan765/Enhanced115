@@ -234,18 +234,35 @@ class ViolationMonitor:
                 # 查找"分享的文件"标记
                 start_marker = '分享的文件'
                 start_idx = content.find(start_marker)
+                logger.debug(f"【Enhanced115】查找'{start_marker}'标记，位置：{start_idx}")
+                
                 if start_idx != -1:
                     search_start = start_idx + len(start_marker)
+                    logger.debug(f"【Enhanced115】从位置{search_start}开始查找引号，内容片段：{content[search_start:search_start+50]}")
+                    
                     # 尝试匹配所有可能的引号类型
                     quote_pairs = [('"', '"'), ('"', '"'), ('"', '"')]
                     for left_quote, right_quote in quote_pairs:
+                        logger.debug(f"【Enhanced115】尝试引号对：左引号='{left_quote}' (U+{ord(left_quote):04X}), 右引号='{right_quote}' (U+{ord(right_quote):04X})")
                         left_idx = content.find(left_quote, search_start)
+                        logger.debug(f"【Enhanced115】左引号位置：{left_idx}")
+                        
                         if left_idx != -1:
                             right_idx = content.find(right_quote, left_idx + 1)
+                            logger.debug(f"【Enhanced115】右引号位置：{right_idx}")
+                            
                             if right_idx != -1:
                                 potential_name = content[left_idx + 1:right_idx]
+                                logger.debug(f"【Enhanced115】提取的内容：{potential_name[:100]}...")
+                                logger.debug(f"【Enhanced115】内容长度：{len(potential_name)}")
+                                
                                 # 验证是否有扩展名
-                                if re.search(r'\.\w+$', potential_name):
+                                ext_match = re.search(r'\.\w+$', potential_name)
+                                logger.debug(f"【Enhanced115】扩展名验证：{ext_match is not None}")
+                                if ext_match:
+                                    logger.debug(f"【Enhanced115】扩展名：{ext_match.group()}")
+                                
+                                if ext_match:
                                     logger.debug(f"【Enhanced115】通过字符串查找提取到文件名：{potential_name[:50]}...")
                                     # 创建一个类似match对象的对象来保持兼容性
                                     class FakeMatch:
@@ -255,6 +272,14 @@ class ViolationMonitor:
                                             return self._name if n == 2 else None
                                     file_match = FakeMatch(potential_name)
                                     break
+                                else:
+                                    logger.debug(f"【Enhanced115】提取的内容没有有效的扩展名")
+                            else:
+                                logger.debug(f"【Enhanced115】未找到右引号")
+                        else:
+                            logger.debug(f"【Enhanced115】未找到左引号")
+                else:
+                    logger.debug(f"【Enhanced115】未找到'{start_marker}'标记")
             
             if not file_match:
                 logger.warning(f"【Enhanced115】无法提取文件名，消息内容：{content}")
