@@ -211,12 +211,16 @@ class ViolationMonitor:
             # 先尝试各种正则表达式模式
             file_match = None
             
-            # 测试模式1：当前使用的反向引用模式
+            # 测试模式：使用Unicode转义确保匹配中文引号
+            # 中文引号：左引号 " (U+201C)，右引号 " (U+201D)
             test_patterns = [
                 (r'分享的文件(["""])([^"""]+?\.\w+)\1', "模式1：反向引用"),
                 (r'分享的文件(["""])(.+?\.\w+)\1', "模式2：反向引用（宽松）"),
                 (r'分享的文件["""]([^"""]+?\.\w+)["""]', "模式3：字符类匹配"),
                 (r'分享的文件["""](.+?\.\w+)["""]', "模式4：字符类匹配（宽松）"),
+                # 使用Unicode转义确保匹配中文引号
+                (r'分享的文件[\u201C\u201D"]([^\u201C\u201D"]+?\.\w+)[\u201C\u201D"]', "模式5：Unicode转义匹配"),
+                (r'分享的文件[\u201C\u201D"](.+?\.\w+)[\u201C\u201D"]', "模式6：Unicode转义匹配（宽松）"),
             ]
             
             for pattern, desc in test_patterns:
@@ -241,8 +245,12 @@ class ViolationMonitor:
                     logger.debug(f"【Enhanced115】从位置{search_start}开始查找引号，内容片段：{content[search_start:search_start+50]}")
                     
                     # 尝试匹配所有可能的引号类型（优先匹配中文引号对）
+                    # 使用Unicode转义序列确保字符正确
                     # 中文引号对：左引号 " (U+201C)，右引号 " (U+201D)
-                    quote_pairs = [('"', '"'), ('"', '"'), ('"', '"')]
+                    quote_pairs = [
+                        ('\u201C', '\u201D'),  # 中文引号对 " " (U+201C, U+201D)
+                        ('"', '"'),            # ASCII引号对
+                    ]
                     for left_quote, right_quote in quote_pairs:
                         logger.debug(f"【Enhanced115】尝试引号对：左引号='{left_quote}' (U+{ord(left_quote):04X}), 右引号='{right_quote}' (U+{ord(right_quote):04X})")
                         left_idx = content.find(left_quote, search_start)
