@@ -169,9 +169,11 @@ class ViolationMonitor:
             # 提取分享时间（格式：你在2025-11-25 10:06:39 分享的文件）
             time_match = re.search(r'(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})', content)
             if not time_match:
+                logger.debug(f"【Enhanced115】时间匹配失败，消息内容：{content[:100]}")
                 return None
             
             share_time_str = time_match.group(1)
+            logger.debug(f"【Enhanced115】提取到分享时间：{share_time_str}")
             
             # 转换为时间戳
             try:
@@ -184,14 +186,29 @@ class ViolationMonitor:
             # 提取文件名信息（格式："东***.mkv"）
             file_match = re.search(r'"([^"]+\.\w+)"', content)
             if not file_match:
-                return None
+                logger.debug(f"【Enhanced115】文件名匹配失败，尝试其他模式")
+                # 尝试更宽松的匹配（可能引号不是标准ASCII引号）
+                file_match = re.search(r'["""](.+?\.\w+)["""]', content)
+                if not file_match:
+                    logger.warning(f"【Enhanced115】无法提取文件名，消息内容：{content}")
+                    return None
             
             file_name = file_match.group(1)
+            logger.debug(f"【Enhanced115】提取到文件名：{file_name[:50]}...")
             
             # 提取首字和扩展名
             first_char = file_name[0] if file_name else ""
             extension_match = re.search(r'\.(\w+)$', file_name)
             extension = f".{extension_match.group(1)}" if extension_match else ""
+            
+            if not extension:
+                logger.warning(f"【Enhanced115】无法提取扩展名，文件名：{file_name}")
+                return None
+            
+            logger.info(
+                f"【Enhanced115】成功解析违规消息："
+                f"时间={share_time_str}，首字={first_char}，扩展名={extension}"
+            )
             
             return {
                 "share_time_str": share_time_str,
@@ -202,7 +219,7 @@ class ViolationMonitor:
             }
             
         except Exception as e:
-            logger.error(f"【Enhanced115】解析违规消息失败：{e}")
+            logger.error(f"【Enhanced115】解析违规消息失败：{e}", exc_info=True)
             return None
     
     def _match_share_record(self, violation_info: Dict[str, Any]) -> Optional[int]:
