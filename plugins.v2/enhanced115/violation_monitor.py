@@ -240,7 +240,8 @@ class ViolationMonitor:
                     search_start = start_idx + len(start_marker)
                     logger.debug(f"【Enhanced115】从位置{search_start}开始查找引号，内容片段：{content[search_start:search_start+50]}")
                     
-                    # 尝试匹配所有可能的引号类型
+                    # 尝试匹配所有可能的引号类型（优先匹配中文引号对）
+                    # 中文引号对：左引号 " (U+201C)，右引号 " (U+201D)
                     quote_pairs = [('"', '"'), ('"', '"'), ('"', '"')]
                     for left_quote, right_quote in quote_pairs:
                         logger.debug(f"【Enhanced115】尝试引号对：左引号='{left_quote}' (U+{ord(left_quote):04X}), 右引号='{right_quote}' (U+{ord(right_quote):04X})")
