@@ -35,6 +35,8 @@ from .task_manager import TaskManager
 from .password_strategy import PasswordStrategy
 from .strm_manager import StrmManager
 from .cleanup_manager import CleanupManager
+from .blacklist_manager import BlacklistManager
+from .violation_monitor import ViolationMonitor
 from .utils import map_local_to_remote, parse_path_mappings
 
 
@@ -112,6 +114,8 @@ class Enhanced115(_PluginBase):
         self._task_manager = None
         self._strm_manager = None
         self._cleanup_manager = None
+        self._blacklist_manager = None
+        self._violation_monitor = None
         
         # 上传队列
         self._upload_queue = queue.Queue()
@@ -205,6 +209,8 @@ class Enhanced115(_PluginBase):
             # 初始化处理器
             self._uploader = Upload115Handler(self._p115_client)
             self._task_manager = TaskManager(self)
+            self._blacklist_manager = BlacklistManager(self)
+            self._violation_monitor = ViolationMonitor(self._p115_client, self._blacklist_manager, self)
             
             if self._share_enabled:
                 share_config = {
@@ -255,11 +261,10 @@ class Enhanced115(_PluginBase):
             if self._task_manager:
                 self._task_manager.clear_uploading_on_startup()
             
-            # 测试系统通知API
-            logger.info("【Enhanced115】开始测试系统通知API...")
-            self.test_system_notifications()
-            
+            # 初始化完成日志
             logger.info("【Enhanced115】插件初始化完成（完全集成my_115_app逻辑）")
+            if self._blacklist_manager and self._violation_monitor:
+                logger.info("【Enhanced115】违规监控已启用，每24小时检查一次系统通知")
             
         except Exception as e:
             logger.error(f"【Enhanced115】插件初始化失败：{e}")
@@ -638,6 +643,17 @@ class Enhanced115(_PluginBase):
                     }
                 )
                 
+                # 检查黑名单
+                tmdb_id = current_task.get('tmdb_id')
+                if tmdb_id and self._blacklist_manager and self._blacklist_manager.is_blacklisted(tmdb_id):
+                    logger.warning(
+                        f"【Enhanced115】{current_task.get('media_title')} (TMDB:{tmdb_id}) "
+                        f"在违规黑名单中，跳过分享"
+                    )
+                    self._task_manager.remove_task(download_hash)
+                    self._stats['blacklisted'] = self._stats.get('blacklisted', 0) + 1
+                    return
+                
                 share_result = self._sharer.create_share(
                     current_task,
                     download_hash,
@@ -647,6 +663,9 @@ class Enhanced115(_PluginBase):
                 if share_result:
                     self._stats['shared'] += 1
                     self._task_manager.record_share_attempt(download_hash, True)
+                    
+                    # 记录分享历史（用于违规匹配）
+                    self._record_share_history(current_task, share_result)
                     
                     # 6. Telegram通知（增强版：传递download_hash获取文件大小）
                     if self._telegram_enabled and self._telegram:
@@ -1080,6 +1099,17 @@ class Enhanced115(_PluginBase):
                 self._task_manager.remove_task(download_hash)
                 return
             
+            # 检查黑名单
+            tmdb_id = task_info.get('tmdb_id')
+            if tmdb_id and self._blacklist_manager and self._blacklist_manager.is_blacklisted(tmdb_id):
+                logger.warning(
+                    f"【Enhanced115】{task_info.get('media_title')} (TMDB:{tmdb_id}) "
+                    f"在违规黑名单中，跳过分享"
+                )
+                self._task_manager.remove_task(download_hash)
+                self._stats['blacklisted'] = self._stats.get('blacklisted', 0) + 1
+                return
+            
             # 创建分享
             share_result = self._sharer.create_share(
                 task_info,
@@ -1089,6 +1119,9 @@ class Enhanced115(_PluginBase):
             
             if share_result:
                 self._stats['shared'] += 1
+                
+                # 记录分享历史（用于违规匹配）
+                self._record_share_history(task_info, share_result)
                 
                 # Telegram通知（增强版：传递download_hash）
                 if self._telegram_enabled and self._telegram:
@@ -1107,6 +1140,49 @@ class Enhanced115(_PluginBase):
                 
         except Exception as e:
             logger.error(f"【Enhanced115】触发分享失败：{e}")
+    
+    def _record_share_history(self, task_info: dict, share_result: dict):
+        """
+        记录分享历史（用于违规检测时匹配）
+        :param task_info: 任务信息
+        :param share_result: 分享结果
+        """
+        try:
+            share_timestamp = int(time.time())
+            
+            share_record = {
+                "share_time": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(share_timestamp)),
+                "timestamp": share_timestamp,
+                "tmdb_id": task_info.get('tmdb_id'),
+                "media_title": task_info.get('media_title', '未知'),
+                "share_mode": task_info.get('share_mode'),
+                "share_url": share_result.get('share_url', ''),
+                "share_code": share_result.get('share_code', '')
+            }
+            
+            # 读取现有历史
+            share_history = self.get_data("share_history") or {}
+            
+            # 添加新记录
+            share_history[str(share_timestamp)] = share_record
+            
+            # 清理30天前的记录
+            cutoff_time = share_timestamp - 30 * 86400
+            share_history = {
+                k: v for k, v in share_history.items()
+                if int(k) > cutoff_time
+            }
+            
+            # 保存
+            self.save_data("share_history", share_history)
+            
+            logger.debug(
+                f"【Enhanced115】已记录分享历史：{share_record['media_title']}，"
+                f"当前保留 {len(share_history)} 条记录"
+            )
+            
+        except Exception as e:
+            logger.error(f"【Enhanced115】记录分享历史失败：{e}")
 
     def get_state(self) -> bool:
         """获取插件运行状态"""
@@ -1843,100 +1919,7 @@ class Enhanced115(_PluginBase):
             "summary": "全量同步115到STRM",
             "description": "扫描115指定目录，生成本地strm映射文件",
             "auth": "apikey"
-        }, {
-            "path": "/test_notifications",
-            "endpoint": self.test_system_notifications,
-            "methods": ["GET"],
-            "summary": "测试115系统通知API",
-            "description": "测试是否能获取到分享违规等系统消息",
-            "auth": "apikey"
         }]
-    
-    def test_system_notifications(self) -> dict:
-        """
-        测试115系统通知API
-        用于验证是否能获取到分享违规等系统消息
-        """
-        logger.info("【Enhanced115】开始测试系统通知API")
-        
-        if not self._p115_client:
-            error_msg = "P115客户端未初始化"
-            logger.error(f"【Enhanced115】{error_msg}")
-            return {"success": False, "message": error_msg}
-        
-        results = {}
-        
-        try:
-            logger.info("【Enhanced115】测试1: msg_contacts_notice()")
-            resp1 = self._p115_client.msg_contacts_notice()
-            results["msg_contacts_notice"] = resp1
-            logger.info(f"【Enhanced115】msg_contacts_notice 返回: {resp1}")
-            
-            logger.info("【Enhanced115】测试2: msg_contacts_ls(t=1, limit=50)")
-            resp2 = self._p115_client.msg_contacts_ls({
-                "limit": 50,
-                "skip": 0,
-                "t": 1
-            })
-            results["msg_contacts_ls_t1"] = resp2
-            logger.info(f"【Enhanced115】msg_contacts_ls(t=1) 返回数据量: {len(str(resp2))} 字符")
-            
-            if resp2.get("state"):
-                msg_list = resp2.get("data", {}).get("list", [])
-                logger.info(f"【Enhanced115】获取到 {len(msg_list)} 条消息")
-                
-                violation_keywords = ["违规", "删除", "分享的文件", "已被", "屏蔽"]
-                violation_msgs = []
-                
-                for msg in msg_list:
-                    msg_str = str(msg)
-                    if any(kw in msg_str for kw in violation_keywords):
-                        violation_msgs.append(msg)
-                        logger.warning(f"【Enhanced115】发现可能的违规消息: {msg}")
-                
-                results["violation_count"] = len(violation_msgs)
-                results["violation_messages"] = violation_msgs
-                results["total_messages"] = len(msg_list)
-                
-                logger.info(f"【Enhanced115】在 {len(msg_list)} 条消息中发现 {len(violation_msgs)} 条可能的违规消息")
-            
-            logger.info("【Enhanced115】测试3: msg_contacts_ls(t=0, limit=20)")
-            resp3 = self._p115_client.msg_contacts_ls({
-                "limit": 20,
-                "skip": 0,
-                "t": 0
-            })
-            results["msg_contacts_ls_t0"] = resp3
-            logger.info(f"【Enhanced115】msg_contacts_ls(t=0) 返回数据量: {len(str(resp3))} 字符")
-            
-            if self._telegram:
-                summary = (
-                    f"115通知API测试完成\n\n"
-                    f"总消息数: {results.get('total_messages', 0)}\n"
-                    f"违规消息: {results.get('violation_count', 0)}\n\n"
-                    f"详细结果请查看MoviePilot日志"
-                )
-                self._telegram.send_message(summary)
-                logger.info("【Enhanced115】已发送Telegram通知")
-            
-            return {
-                "success": True,
-                "message": "测试完成，请查看日志获取详细信息",
-                "summary": {
-                    "total_messages": results.get("total_messages", 0),
-                    "violation_count": results.get("violation_count", 0)
-                },
-                "results": results
-            }
-            
-        except Exception as e:
-            error_msg = f"测试失败: {str(e)}"
-            logger.error(f"【Enhanced115】{error_msg}", exc_info=True)
-            return {
-                "success": False,
-                "message": error_msg,
-                "results": results
-            }
     
     def strm_full_sync(self, root_cid: str = None, scope: str = "both") -> dict:
         """
@@ -2074,6 +2057,16 @@ class Enhanced115(_PluginBase):
                 "func": self._cleanup_manager.check_and_cleanup,
                 "kwargs": {"seconds": self._cleanup_interval},
                 "func_kwargs": func_kwargs
+            })
+        
+        # 添加违规检查服务
+        if self._violation_monitor:
+            services.append({
+                "id": "Enhanced115.check_violations",
+                "name": "检查分享违规通知",
+                "trigger": "interval",
+                "func": self._violation_monitor.check_violations,
+                "kwargs": {"hours": 24}  # 每天检查一次
             })
         
         return services
