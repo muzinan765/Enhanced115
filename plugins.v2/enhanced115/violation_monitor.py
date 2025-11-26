@@ -208,16 +208,59 @@ class ViolationMonitor:
                 return None
             
             # 提取文件名信息（格式："东***.mkv" 或 "东***.mkv"）
-            # 方法1：精确匹配"分享的文件"后面的引号对（使用反向引用确保引号匹配）
-            file_match = re.search(r'分享的文件(["""])([^"""]+?\.\w+)\1', content)
+            # 先尝试各种正则表达式模式
+            file_match = None
+            
+            # 测试模式1：当前使用的反向引用模式
+            test_patterns = [
+                (r'分享的文件(["""])([^"""]+?\.\w+)\1', "模式1：反向引用"),
+                (r'分享的文件(["""])(.+?\.\w+)\1', "模式2：反向引用（宽松）"),
+                (r'分享的文件["""]([^"""]+?\.\w+)["""]', "模式3：字符类匹配"),
+                (r'分享的文件["""](.+?\.\w+)["""]', "模式4：字符类匹配（宽松）"),
+            ]
+            
+            for pattern, desc in test_patterns:
+                test_match = re.search(pattern, content)
+                if test_match:
+                    logger.debug(f"【Enhanced115】{desc}匹配成功：{test_match.groups()}")
+                    file_match = test_match
+                    break
+                else:
+                    logger.debug(f"【Enhanced115】{desc}匹配失败")
+            
+            # 如果所有正则都失败，使用字符串查找方法
             if not file_match:
-                # 方法2：如果精确匹配失败，尝试匹配任何引号对
-                file_match = re.search(r'(["""])([^"""]+?\.\w+)\1', content)
+                logger.debug("【Enhanced115】所有正则模式都失败，尝试字符串查找方法")
+                # 查找"分享的文件"标记
+                start_marker = '分享的文件'
+                start_idx = content.find(start_marker)
+                if start_idx != -1:
+                    search_start = start_idx + len(start_marker)
+                    # 尝试匹配所有可能的引号类型
+                    quote_pairs = [('"', '"'), ('"', '"'), ('"', '"')]
+                    for left_quote, right_quote in quote_pairs:
+                        left_idx = content.find(left_quote, search_start)
+                        if left_idx != -1:
+                            right_idx = content.find(right_quote, left_idx + 1)
+                            if right_idx != -1:
+                                potential_name = content[left_idx + 1:right_idx]
+                                # 验证是否有扩展名
+                                if re.search(r'\.\w+$', potential_name):
+                                    logger.debug(f"【Enhanced115】通过字符串查找提取到文件名：{potential_name[:50]}...")
+                                    # 创建一个类似match对象的对象来保持兼容性
+                                    class FakeMatch:
+                                        def __init__(self, name):
+                                            self._name = name
+                                        def group(self, n):
+                                            return self._name if n == 2 else None
+                                    file_match = FakeMatch(potential_name)
+                                    break
+            
             if not file_match:
                 logger.warning(f"【Enhanced115】无法提取文件名，消息内容：{content}")
                 return None
             
-            # group(1)是引号字符，group(2)是文件名
+            # 提取文件名（正则匹配的group(2)或FakeMatch的group(2)都返回文件名）
             file_name = file_match.group(2)
             logger.debug(f"【Enhanced115】提取到文件名：{file_name[:50]}...")
             
