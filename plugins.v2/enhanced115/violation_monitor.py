@@ -150,13 +150,6 @@ class ViolationMonitor:
                 logger.warning(f"【Enhanced115】无法解析违规消息：{content}")
                 return False
             
-            logger.info(
-                f"【Enhanced115】解析到违规分享："
-                f"时间={violation_info['share_time_str']}，"
-                f"首字={violation_info['first_char']}，"
-                f"扩展名={violation_info['extension']}"
-            )
-            
             # 尝试匹配分享记录
             tmdb_id = self._match_share_record(violation_info)
             
@@ -169,6 +162,7 @@ class ViolationMonitor:
                 }
                 
                 self.blacklist_manager.add_to_blacklist(tmdb_id, blacklist_info)
+                logger.info(f"【Enhanced115】已将 TMDB_ID={tmdb_id} 加入黑名单")
                 return True
             else:
                 logger.warning(
@@ -193,11 +187,10 @@ class ViolationMonitor:
             # 提取分享时间（格式：你在2025-11-25 10:06:39 分享的文件）
             time_match = re.search(r'(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})', content)
             if not time_match:
-                logger.debug(f"【Enhanced115】时间匹配失败，消息内容：{content[:100]}")
+                logger.warning(f"【Enhanced115】无法提取分享时间")
                 return None
             
             share_time_str = time_match.group(1)
-            logger.debug(f"【Enhanced115】提取到分享时间：{share_time_str}")
             
             # 转换为时间戳
             try:
@@ -207,106 +200,44 @@ class ViolationMonitor:
                 logger.error(f"【Enhanced115】时间转换失败：{e}")
                 return None
             
-            # 提取文件名信息（格式："东***.mkv" 或 "东***.mkv"）
-            # 先尝试各种正则表达式模式
-            file_match = None
+            # 提取文件名信息（格式："文件名.扩展名"，使用中文引号）
+            # 中文引号对：左引号 " (U+201C)，右引号 " (U+201D)
+            file_name = None
             
-            # 测试模式：使用Unicode转义确保匹配中文引号
-            # 中文引号：左引号 " (U+201C)，右引号 " (U+201D)
-            # 所有模式都使用两个捕获组：group(1)=引号，group(2)=文件名
-            test_patterns = [
-                (r'分享的文件(["""])([^"""]+?\.\w+)\1', "模式1：反向引用"),
-                (r'分享的文件(["""])(.+?\.\w+)\1', "模式2：反向引用（宽松）"),
-                (r'分享的文件(["""])([^"""]+?\.\w+)\1', "模式3：字符类匹配"),
-                (r'分享的文件(["""])(.+?\.\w+)\1', "模式4：字符类匹配（宽松）"),
-                # 使用Unicode转义确保匹配中文引号，反向引用确保左右引号匹配
-                (r'分享的文件([\u201C\u201D"])([^\u201C\u201D"]+?\.\w+)\1', "模式5：Unicode转义匹配"),
-                (r'分享的文件([\u201C\u201D"])(.+?\.\w+)\1', "模式6：Unicode转义匹配（宽松）"),
-            ]
+            # 查找"分享的文件"标记
+            start_marker = '分享的文件'
+            start_idx = content.find(start_marker)
             
-            for pattern, desc in test_patterns:
-                test_match = re.search(pattern, content)
-                if test_match:
-                    logger.debug(f"【Enhanced115】{desc}匹配成功：{test_match.groups()}")
-                    file_match = test_match
-                    break
-                else:
-                    logger.debug(f"【Enhanced115】{desc}匹配失败")
-            
-            # 如果所有正则都失败，使用字符串查找方法
-            if not file_match:
-                logger.debug("【Enhanced115】所有正则模式都失败，尝试字符串查找方法")
-                # 查找"分享的文件"标记
-                start_marker = '分享的文件'
-                start_idx = content.find(start_marker)
-                logger.debug(f"【Enhanced115】查找'{start_marker}'标记，位置：{start_idx}")
-                
-                if start_idx != -1:
-                    search_start = start_idx + len(start_marker)
-                    logger.debug(f"【Enhanced115】从位置{search_start}开始查找引号，内容片段：{content[search_start:search_start+50]}")
-                    
-                    # 尝试匹配所有可能的引号类型（优先匹配中文引号对）
-                    # 使用Unicode转义序列确保字符正确
-                    # 中文引号对：左引号 " (U+201C)，右引号 " (U+201D)
-                    quote_pairs = [
-                        ('\u201C', '\u201D'),  # 中文引号对 " " (U+201C, U+201D)
-                        ('"', '"'),            # ASCII引号对
-                    ]
-                    for left_quote, right_quote in quote_pairs:
-                        logger.debug(f"【Enhanced115】尝试引号对：左引号='{left_quote}' (U+{ord(left_quote):04X}), 右引号='{right_quote}' (U+{ord(right_quote):04X})")
-                        left_idx = content.find(left_quote, search_start)
-                        logger.debug(f"【Enhanced115】左引号位置：{left_idx}")
-                        
-                        if left_idx != -1:
-                            right_idx = content.find(right_quote, left_idx + 1)
-                            logger.debug(f"【Enhanced115】右引号位置：{right_idx}")
-                            
-                            if right_idx != -1:
-                                potential_name = content[left_idx + 1:right_idx]
-                                logger.debug(f"【Enhanced115】提取的内容：{potential_name[:100]}...")
-                                logger.debug(f"【Enhanced115】内容长度：{len(potential_name)}")
-                                
-                                # 验证是否有扩展名
-                                ext_match = re.search(r'\.\w+$', potential_name)
-                                logger.debug(f"【Enhanced115】扩展名验证：{ext_match is not None}")
-                                if ext_match:
-                                    logger.debug(f"【Enhanced115】扩展名：{ext_match.group()}")
-                                
-                                if ext_match:
-                                    logger.debug(f"【Enhanced115】通过字符串查找提取到文件名：{potential_name[:50]}...")
-                                    # 创建一个类似match对象的对象来保持兼容性
-                                    class FakeMatch:
-                                        def __init__(self, name):
-                                            self._name = name
-                                        def group(self, n):
-                                            return self._name if n == 2 else None
-                                    file_match = FakeMatch(potential_name)
-                                    break
-                                else:
-                                    logger.debug(f"【Enhanced115】提取的内容没有有效的扩展名")
-                            else:
-                                logger.debug(f"【Enhanced115】未找到右引号")
-                        else:
-                            logger.debug(f"【Enhanced115】未找到左引号")
-                else:
-                    logger.debug(f"【Enhanced115】未找到'{start_marker}'标记")
-            
-            if not file_match:
-                logger.warning(f"【Enhanced115】无法提取文件名，消息内容：{content}")
+            if start_idx == -1:
+                logger.warning(f"【Enhanced115】未找到'{start_marker}'标记")
                 return None
             
-            # 提取文件名（正则匹配的group(2)或FakeMatch的group(2)都返回文件名）
-            file_name = file_match.group(2)
+            # 从标记后开始查找引号
+            search_start = start_idx + len(start_marker)
+            left_quote = '\u201C'  # 左引号 "
+            right_quote = '\u201D'  # 右引号 "
+            
+            left_idx = content.find(left_quote, search_start)
+            if left_idx == -1:
+                logger.warning(f"【Enhanced115】未找到左引号")
+                return None
+            
+            right_idx = content.find(right_quote, left_idx + 1)
+            if right_idx == -1:
+                logger.warning(f"【Enhanced115】未找到右引号")
+                return None
+            
+            file_name = content[left_idx + 1:right_idx]
             logger.debug(f"【Enhanced115】提取到文件名：{file_name[:50]}...")
             
-            # 提取首字和扩展名
-            first_char = file_name[0] if file_name else ""
+            # 验证并提取扩展名
             extension_match = re.search(r'\.(\w+)$', file_name)
-            extension = f".{extension_match.group(1)}" if extension_match else ""
-            
-            if not extension:
-                logger.warning(f"【Enhanced115】无法提取扩展名，文件名：{file_name}")
+            if not extension_match:
+                logger.warning(f"【Enhanced115】文件名没有有效的扩展名：{file_name}")
                 return None
+            
+            first_char = file_name[0]
+            extension = f".{extension_match.group(1)}"
             
             logger.info(
                 f"【Enhanced115】成功解析违规消息："
