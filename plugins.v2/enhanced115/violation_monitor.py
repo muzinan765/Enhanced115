@@ -40,9 +40,9 @@ class ViolationMonitor:
         }
         
         try:
-            # 获取最后检查时间
+            # 获取已处理消息ID列表
             state = self._load_state()
-            last_check_time = state.get("last_check_time", 0)
+            processed_ids = set(state.get("processed_message_ids", []))
             
             # 获取系统消息
             resp = self.client.msg_contacts_ls({
@@ -60,20 +60,34 @@ class ViolationMonitor:
             
             logger.info(f"【Enhanced115】获取到 {len(messages)} 条系统消息")
             
-            # 过滤新消息和违规消息
+            # 过滤已处理消息和违规消息
             violation_messages = []
+            new_processed_ids = set(processed_ids)
+            
             for msg in messages:
-                msg_time = msg.get("send_time", 0)
+                # 使用c_id作为唯一标识，如果没有则使用send_time
+                msg_id = msg.get("c_id") or str(msg.get("send_time", ""))
                 msg_content = msg.get("b", "")
+                msg_time = msg.get("send_time", 0)
                 
-                # 只处理新消息
-                if msg_time <= last_check_time:
+                # 跳过已处理的消息
+                if msg_id in processed_ids:
+                    logger.debug(f"【Enhanced115】跳过已处理消息：{msg_id}")
                     continue
                 
                 # 检查是否为违规消息
                 if self._is_violation_message(msg_content):
+                    msg_time_str = datetime.fromtimestamp(msg_time).strftime("%Y-%m-%d %H:%M:%S") if msg_time > 0 else "未知"
+                    logger.info(
+                        f"【Enhanced115】识别到违规消息（ID={msg_id}，时间={msg_time_str}）："
+                        f"{msg_content[:100]}..."
+                    )
                     violation_messages.append(msg)
                     stats["new_violations"] += 1
+                    # 标记为已处理
+                    new_processed_ids.add(msg_id)
+                else:
+                    logger.debug(f"【Enhanced115】非违规消息，跳过：{msg_content[:50]}...")
             
             logger.info(f"【Enhanced115】发现 {len(violation_messages)} 条新违规消息")
             
@@ -84,7 +98,16 @@ class ViolationMonitor:
                 else:
                     stats["failed"] += 1
             
-            # 更新检查时间
+            # 更新已处理消息ID列表（限制最大数量，避免无限增长）
+            max_processed_ids = 1000
+            if len(new_processed_ids) > max_processed_ids:
+                # 保留最新的1000个ID
+                processed_list = sorted(list(new_processed_ids), reverse=True)[:max_processed_ids]
+                new_processed_ids = set(processed_list)
+                logger.debug(f"【Enhanced115】已处理消息ID列表已满，保留最新的{max_processed_ids}条")
+            
+            # 保存状态
+            state["processed_message_ids"] = list(new_processed_ids)
             state["last_check_time"] = int(time.time())
             self._save_state(state)
             
@@ -277,9 +300,13 @@ class ViolationMonitor:
         """加载检查状态"""
         state = self.data_ops.get_data(self._state_key) or {}
         
+        # 初始化已处理消息ID列表
+        if "processed_message_ids" not in state:
+            state["processed_message_ids"] = []
+        
+        # 初始化最后检查时间
         if "last_check_time" not in state:
-            # 首次运行，设置为7天前
-            state["last_check_time"] = int(time.time()) - 7 * 86400
+            state["last_check_time"] = 0
         
         return state
     
