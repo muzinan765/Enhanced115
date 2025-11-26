@@ -70,11 +70,9 @@ class ViolationMonitor:
                 msg_content = msg.get("b", "")
                 msg_time = msg.get("send_time", 0)
                 
-                # 测试阶段：暂时不跳过已处理的消息，以便测试
-                # TODO: 测试完成后恢复已处理消息过滤
-                # if msg_id in processed_ids:
-                #     logger.debug(f"【Enhanced115】跳过已处理消息：{msg_id}")
-                #     continue
+                # 跳过已处理的消息
+                if msg_id in processed_ids:
+                    continue
                 
                 # 检查是否为违规消息
                 if self._is_violation_message(msg_content):
