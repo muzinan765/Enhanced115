@@ -295,15 +295,46 @@ class CleanupManager:
                 logger.debug(f"【Enhanced115】获取订阅下载器种子失败或为空：{subscribe_downloader_name}")
                 return
             
+            logger.debug(f"【Enhanced115】开始检查{len(subscribe_torrents)}个订阅种子的tracker状态...")
+            
             # 检查每个种子的tracker消息
             conflict_torrents = []
             for torrent in subscribe_torrents:
-                tracker_msg = torrent.get('tracker_msg', '').lower()
-                # 检查tracker消息是否包含冲突关键词
-                if 'same torrent' in tracker_msg:
-                    conflict_torrents.append(torrent)
+                torrent_hash = torrent.get('hash')
+                torrent_name = torrent.get('name', 'Unknown')
+                
+                if not torrent_hash:
+                    continue
+                
+                # 获取tracker详细信息（qbittorrent需要单独调用API）
+                try:
+                    # 检查下载器是否有qbc属性（qbittorrent专用）
+                    if not hasattr(subscribe_server, 'qbc') or not subscribe_server.qbc:
+                        logger.debug(f"【Enhanced115】下载器不支持tracker消息检查（非qBittorrent）")
+                        break
+                    
+                    # 获取该种子的所有tracker信息
+                    trackers = subscribe_server.qbc.torrents_trackers(torrent_hash=torrent_hash)
+                    
+                    # 检查所有tracker的消息
+                    has_conflict = False
+                    for tracker in trackers:
+                        tracker_msg = tracker.get('msg', '').lower()
+                        # 检查tracker消息是否包含冲突关键词
+                        if 'same torrent' in tracker_msg or 'torrent already' in tracker_msg or 'already exists' in tracker_msg:
+                            has_conflict = True
+                            logger.info(f"【Enhanced115】发现冲突种子：{torrent_name[:50]} - tracker消息：{tracker_msg}")
+                            break
+                    
+                    if has_conflict:
+                        conflict_torrents.append(torrent)
+                        
+                except Exception as e:
+                    logger.debug(f"【Enhanced115】获取种子tracker信息失败：{torrent_name[:30]}，错误：{e}")
+                    continue
             
             if not conflict_torrents:
+                logger.debug(f"【Enhanced115】未发现下载冲突")
                 return
             
             logger.info(f"【Enhanced115】发现{len(conflict_torrents)}个订阅冲突种子，开始处理...")
