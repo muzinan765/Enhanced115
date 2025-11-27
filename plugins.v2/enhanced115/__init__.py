@@ -97,6 +97,7 @@ class Enhanced115(_PluginBase):
         self._cleanup_enabled = False  # 是否启用自动清理和重试
         self._cleanup_interval = 600  # 清理检查间隔（秒），默认10分钟
         self._cleanup_tag = "已整理"  # 整理完成标签名称
+        self._max_retry_count = 3  # 最大重试次数，默认3次
         
         # 任务超时配置
         self._task_timeout_hours = 24  # 任务超时时间（小时），默认24小时
@@ -182,6 +183,7 @@ class Enhanced115(_PluginBase):
         self._cleanup_enabled = config.get("cleanup_enabled", False)
         self._cleanup_interval = int(config.get("cleanup_interval", 600))
         self._cleanup_tag = config.get("cleanup_tag", "已整理")
+        self._max_retry_count = int(config.get("max_retry_count", 3))
         
         # 任务超时配置
         self._task_timeout_hours = int(config.get("task_timeout_hours", 24))
@@ -249,8 +251,15 @@ class Enhanced115(_PluginBase):
             
             # 初始化清理管理器
             if self._cleanup_enabled:
-                self._cleanup_manager = CleanupManager(self, cleanup_tag=self._cleanup_tag)
-                logger.info(f"【Enhanced115】清理管理器已初始化，检查间隔：{self._cleanup_interval}秒，标签：{self._cleanup_tag}")
+                self._cleanup_manager = CleanupManager(
+                    self, 
+                    cleanup_tag=self._cleanup_tag,
+                    max_retry_count=self._max_retry_count
+                )
+                logger.info(
+                    f"【Enhanced115】清理管理器已初始化，检查间隔：{self._cleanup_interval}秒，"
+                    f"标签：{self._cleanup_tag}，最大重试：{self._max_retry_count}次"
+                )
                 if self._conflict_check_enabled:
                     logger.info(f"【Enhanced115】下载冲突检查已启用，订阅：{self._subscribe_downloader}，刷流：{self._brush_downloader}")
             
@@ -1622,19 +1631,32 @@ class Enhanced115(_PluginBase):
                             },
                             {
                                 'component': 'VCol',
-                                'props': {'cols': 12, 'md': 6},
+                                'props': {'cols': 12, 'md': 4},
                                 'content': [{
                                     'component': 'VTextField',
                                     'props': {
                                         'model': 'cleanup_tag',
                                         'label': '整理完成标签',
-                                        'hint': '默认"已整理"，硬链接模式可能是"copied"'
+                                        'hint': '默认"已整理"'
                                     }
                                 }]
                             },
                             {
                                 'component': 'VCol',
-                                'props': {'cols': 12, 'md': 6},
+                                'props': {'cols': 12, 'md': 4},
+                                'content': [{
+                                    'component': 'VTextField',
+                                    'props': {
+                                        'model': 'max_retry_count',
+                                        'label': '最大重试次数',
+                                        'type': 'number',
+                                        'hint': '整理失败后的最大重试次数，默认3次'
+                                    }
+                                }]
+                            },
+                            {
+                                'component': 'VCol',
+                                'props': {'cols': 12, 'md': 4},
                                 'content': [{
                                     'component': 'VTextField',
                                     'props': {
@@ -1759,6 +1781,7 @@ class Enhanced115(_PluginBase):
             'cleanup_enabled': False,
             'cleanup_interval': 600,
             'cleanup_tag': '已整理',
+            'max_retry_count': 3,
             'task_timeout_hours': 24,
             'conflict_check_enabled': False,
             'subscribe_downloader': '',

@@ -15,15 +15,17 @@ from app.helper.downloader import DownloaderHelper
 class CleanupManager:
     """清理和重试管理器"""
     
-    def __init__(self, plugin_instance, cleanup_tag: str = "已整理"):
+    def __init__(self, plugin_instance, cleanup_tag: str = "已整理", max_retry_count: int = 3):
         """
         初始化清理管理器
         
         :param plugin_instance: 插件实例，用于访问配置和保存数据
         :param cleanup_tag: 整理完成标签名称（默认：已整理）
+        :param max_retry_count: 最大重试次数（默认：3）
         """
         self.plugin = plugin_instance
         self._cleanup_tag = cleanup_tag
+        self._max_retry_count = max_retry_count
         self._pending_hashes: Set[str] = set()  # 待检查的download_hash集合
         self._last_check_time: Dict[str, float] = {}  # 记录每个hash的最后检查时间
         
@@ -90,6 +92,14 @@ class CleanupManager:
             self._pending_hashes.discard(download_hash)
             return
         
+        # 获取任务的expected_count（关键修复：需要验证整理数量是否达标）
+        task_info = None
+        expected_count = 0
+        if hasattr(self.plugin, '_task_manager') and self.plugin._task_manager:
+            task_info = self.plugin._task_manager.get_task(download_hash)
+            if task_info:
+                expected_count = task_info.get('expected_count', 0)
+        
         # 统计成功/失败情况
         total = len(records)
         success_count = sum(1 for r in records if r.status)
@@ -99,22 +109,53 @@ class CleanupManager:
         downloader = records[0].downloader if records else None
         
         if failed_count == 0:
-            # 全部成功 - 执行清理
-            logger.info(f"【Enhanced115】任务全部整理成功（{total}/{total}）：{download_hash}")
+            # 检查是否达到预期数量（防止过早删除种子）
+            if expected_count > 0 and total < expected_count:
+                # 还有文件没有整理，等待
+                logger.debug(
+                    f"【Enhanced115】任务整理中（{total}/{expected_count}），"
+                    f"等待剩余{expected_count - total}个文件整理：{download_hash}"
+                )
+                return
+            
+            # 全部成功且数量达标 - 执行清理
+            display_count = f"{total}/{expected_count}" if expected_count > 0 else f"{total}/{total}"
+            logger.info(f"【Enhanced115】任务全部整理成功（{display_count}）：{download_hash}")
             self._cleanup_completed_task(download_hash, downloader)
             self._pending_hashes.discard(download_hash)
             
         else:
-            # 有失败 - 检查是否需要重试
+            # 有失败 - 需要重试
             logger.warning(f"【Enhanced115】任务有{failed_count}个文件整理失败（{success_count}/{total}）：{download_hash}")
             
-            # 检查种子是否已被标记
-            if self._has_finished_tag(download_hash, downloader):
-                logger.info(f"【Enhanced115】发现异常状态（失败但已标记），触发重试：{download_hash}")
-                self._trigger_retry(download_hash, downloader, records)
+            # 获取任务信息以检查重试次数
+            if task_info:
+                retry_count = task_info.get('retry_count', 0)
+                
+                if retry_count < self._max_retry_count:
+                    # 未超过重试上限，触发重试
+                    logger.info(f"【Enhanced115】触发重试（第{retry_count + 1}次）：{download_hash}")
+                    self._trigger_retry(download_hash, downloader, records)
+                    
+                    # 增加重试计数
+                    if hasattr(self.plugin, '_task_manager') and self.plugin._task_manager:
+                        self.plugin._task_manager.increment_retry_count(download_hash)
+                    
+                    # 从队列移除，避免重复处理
+                    self._pending_hashes.discard(download_hash)
+                else:
+                    # 超过重试上限
+                    logger.warning(
+                        f"【Enhanced115】任务已达到最大重试次数（{self._max_retry_count}次），"
+                        f"放弃重试：{download_hash}"
+                    )
+                    # 从队列移除
+                    self._pending_hashes.discard(download_hash)
             else:
-                logger.debug(f"【Enhanced115】等待主程序首次整理：{download_hash}")
-                # 保留在队列中，下次继续检查
+                # 无法获取任务信息，依然触发重试（保守策略）
+                logger.info(f"【Enhanced115】无法获取任务信息，触发重试：{download_hash}")
+                self._trigger_retry(download_hash, downloader, records)
+                self._pending_hashes.discard(download_hash)
     
     def _cleanup_completed_task(self, download_hash: str, downloader: Optional[str]):
         """

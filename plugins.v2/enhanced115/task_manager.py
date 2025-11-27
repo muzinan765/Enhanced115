@@ -62,7 +62,8 @@ class TaskManager:
             'completed_files': [],  # 已完成的文件（持久化）
             'pending_cleanup': [],
             'notification_sent': False,
-            'share_history': []
+            'share_history': [],
+            'retry_count': 0  # 重试次数
         }
         
         # 保存任务
@@ -247,6 +248,21 @@ class TaskManager:
         if success:
             updates['status'] = 'shared'
         self.update_task(download_hash, updates)
+    
+    def increment_retry_count(self, download_hash: str) -> int:
+        """
+        增加重试计数
+        
+        :param download_hash: 任务hash
+        :return: 更新后的重试次数
+        """
+        task = self.get_task(download_hash)
+        if not task:
+            return 0
+        
+        retry_count = task.get('retry_count', 0) + 1
+        self.update_task(download_hash, {'retry_count': retry_count})
+        return retry_count
     
     def is_task_complete(self, download_hash: str) -> bool:
         """检查任务是否完成"""
