@@ -267,6 +267,31 @@ class CleanupManager:
         """
         return len(self._pending_hashes)
     
+    def _reannounce_torrents(self, server, torrent_hashes: list, downloader_desc: str = "下载器"):
+        """
+        强制种子重新汇报tracker
+        
+        :param server: 下载器实例
+        :param torrent_hashes: 种子hash列表
+        :param downloader_desc: 下载器描述（用于日志）
+        """
+        if not server or not torrent_hashes:
+            return
+        
+        try:
+            # 检查是否为qBittorrent（只有qBittorrent支持重新汇报）
+            if not hasattr(server, 'qbc') or not server.qbc:
+                logger.debug(f"【Enhanced115】{downloader_desc}下载器不支持重新汇报（非qBittorrent）")
+                return
+            
+            # 调用qBittorrent API强制重新汇报
+            server.qbc.torrents_reannounce(torrent_hashes=torrent_hashes)
+            
+            logger.info(f"【Enhanced115】已触发{downloader_desc}下载器{len(torrent_hashes)}个种子重新汇报tracker")
+            
+        except Exception as e:
+            logger.error(f"【Enhanced115】{downloader_desc}下载器重新汇报失败：{e}")
+    
     def _resolve_download_conflicts(self, subscribe_downloader_name: str, brush_downloader_name: str):
         """
         解决下载冲突：检查订阅下载器的tracker消息，如果有冲突则删除刷流下载器的种子
@@ -340,6 +365,7 @@ class CleanupManager:
             logger.info(f"【Enhanced115】发现{len(conflict_torrents)}个订阅冲突种子，开始处理...")
             
             # 处理每个冲突种子
+            resolved_hashes = []  # 记录成功解决冲突的种子hash
             for conflict_torrent in conflict_torrents:
                 torrent_hash = conflict_torrent.get('hash')
                 torrent_name = conflict_torrent.get('name', 'Unknown')
@@ -358,8 +384,17 @@ class CleanupManager:
                     
                     if result:
                         logger.info(f"【Enhanced115】已删除刷流下载器中的冲突种子和文件：{torrent_name}")
+                        resolved_hashes.append(torrent_hash)
                     else:
                         logger.error(f"【Enhanced115】删除刷流下载器冲突种子失败：{torrent_name}")
+            
+            # 如果成功解决了冲突，等待5秒后触发订阅下载器重新汇报
+            if resolved_hashes:
+                logger.info(f"【Enhanced115】等待5秒，让tracker服务器更新状态...")
+                time.sleep(5)
+                
+                # 强制订阅下载器重新汇报种子
+                self._reannounce_torrents(subscribe_server, resolved_hashes, "订阅")
                         
         except Exception as e:
             logger.error(f"【Enhanced115】解决下载冲突异常：{e}")
