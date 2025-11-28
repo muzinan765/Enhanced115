@@ -208,13 +208,26 @@ class CleanupManager:
         :param records: 整理记录列表
         """
         try:
-            # 1. 优先删除失败的整理记录（不需要下载器信息也能执行）
+            # 导入必要的模块
+            from app.chain.transfer import TransferChain
+            from app.schemas import FileItem
+            
+            # 1. 优先删除失败的整理记录，并收集需要重试的文件信息
             transferhis = TransferHistoryOper()
             deleted_count = 0
+            retry_files = []
+            
             for record in records:
                 if not record.status:
                     # 确保ID有效
                     if record.id:
+                        # 收集文件信息（必须在删除前收集）
+                        if record.src and record.src_storage:
+                            retry_files.append({
+                                'path': record.src,
+                                'storage': record.src_storage
+                            })
+                            
                         transferhis.delete(record.id)
                         deleted_count += 1
                         logger.debug(f"【Enhanced115】已删除失败记录：{record.id} - {record.src}")
@@ -225,12 +238,37 @@ class CleanupManager:
             # 2. 检查下载器信息
             if not downloader:
                 logger.warning(f"【Enhanced115】未找到下载器信息，跳过删除种子标签：{download_hash}")
-                return
+            else:
+                # 3. 删除种子的"已整理"标签
+                self._remove_finished_tag(download_hash, downloader)
             
-            # 3. 删除种子的"已整理"标签
-            self._remove_finished_tag(download_hash, downloader)
+            # 4. 主动触发文件整理（关键修复：解决删除记录后主程序不整理的问题）
+            if retry_files:
+                logger.info(f"【Enhanced115】正在触发{len(retry_files)}个文件的重新整理...")
+                for file_info in retry_files:
+                    try:
+                        file_path = file_info['path']
+                        storage = file_info['storage']
+                        path_obj = Path(file_path)
+                        
+                        # 构造FileItem对象，模拟文件监控事件
+                        file_item = FileItem(
+                            storage=storage,
+                            path=file_path,
+                            type="file",
+                            name=path_obj.name,
+                            basename=path_obj.stem,
+                            extension=path_obj.suffix[1:] if path_obj.suffix else "",
+                        )
+                        
+                        # 调用核心整理链
+                        TransferChain().do_transfer(fileitem=file_item)
+                        logger.debug(f"【Enhanced115】已手动触发整理：{file_path}")
+                        
+                    except Exception as e:
+                        logger.error(f"【Enhanced115】触发文件整理失败：{file_info.get('path')} - {e}")
             
-            logger.info(f"【Enhanced115】已触发重试，等待主程序重新整理：{download_hash}")
+            logger.info(f"【Enhanced115】已触发重试流程：{download_hash}")
             
         except Exception as e:
             logger.error(f"【Enhanced115】触发重试异常：{download_hash}，错误：{e}")
