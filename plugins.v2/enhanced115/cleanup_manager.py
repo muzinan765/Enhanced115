@@ -53,6 +53,21 @@ class CleanupManager:
         """
         logger.info(f"【Enhanced115】清理检查服务已触发，订阅下载器：{subscribe_downloader}，刷流下载器：{brush_downloader}")
         
+        # 1. 自动同步TaskManager中的待处理任务（修复：防止重启后队列丢失）
+        if hasattr(self.plugin, '_task_manager') and self.plugin._task_manager:
+            try:
+                pending_tasks = self.plugin._task_manager.get_all_pending_tasks()
+                if pending_tasks:
+                    sync_count = 0
+                    for download_hash in pending_tasks.keys():
+                        if download_hash and download_hash not in self._pending_hashes:
+                            self._pending_hashes.add(download_hash)
+                            sync_count += 1
+                    if sync_count > 0:
+                        logger.debug(f"【Enhanced115】已从任务管理器同步{sync_count}个任务到清理队列")
+            except Exception as e:
+                logger.warning(f"【Enhanced115】同步任务队列失败：{e}")
+        
         # 如果配置了下载冲突解决，优先处理
         if subscribe_downloader and brush_downloader:
             try:
@@ -192,24 +207,27 @@ class CleanupManager:
         :param downloader: 下载器名称
         :param records: 整理记录列表
         """
-        if not downloader:
-            logger.warning(f"【Enhanced115】未找到下载器信息：{download_hash}")
-            return
-        
         try:
-            # 1. 删除失败的整理记录
+            # 1. 优先删除失败的整理记录（不需要下载器信息也能执行）
             transferhis = TransferHistoryOper()
             deleted_count = 0
             for record in records:
                 if not record.status:
-                    transferhis.delete(record.id)
-                    deleted_count += 1
-                    logger.debug(f"【Enhanced115】已删除失败记录：{record.id} - {record.src}")
+                    # 确保ID有效
+                    if record.id:
+                        transferhis.delete(record.id)
+                        deleted_count += 1
+                        logger.debug(f"【Enhanced115】已删除失败记录：{record.id} - {record.src}")
             
             if deleted_count > 0:
                 logger.info(f"【Enhanced115】已删除{deleted_count}条失败记录")
             
-            # 2. 删除种子的"已整理"标签
+            # 2. 检查下载器信息
+            if not downloader:
+                logger.warning(f"【Enhanced115】未找到下载器信息，跳过删除种子标签：{download_hash}")
+                return
+            
+            # 3. 删除种子的"已整理"标签
             self._remove_finished_tag(download_hash, downloader)
             
             logger.info(f"【Enhanced115】已触发重试，等待主程序重新整理：{download_hash}")
