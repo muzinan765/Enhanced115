@@ -49,23 +49,12 @@ class TaskAnalyzer:
         # 合并所有文本用于搜索
         combined_search_text = f"{desc_str} {name_str} {message_text}"
         
-        # 2. 提取episodes字段（如"E01-E12"）
+        # 2. 提取episodes字段（如"E01-E12"、"E01-E03、E10-E11"）
         ep_str = download_history.episodes or ''
-        parts = re.findall(r'(\d+)', ep_str)
+        episodes = TaskAnalyzer._parse_episode_numbers(ep_str)
         
-        # 3. 计算预期文件数
-        expected_count = 0
-        if len(parts) == 1:
-            expected_count = 1  # 单集
-        elif len(parts) > 1:
-            try:
-                # E01-E12 → 12-1+1=12
-                expected_count = int(parts[-1]) - int(parts[0]) + 1
-            except (ValueError, IndexError):
-                expected_count = len(parts)
-        
-        if expected_count == 0:
-            expected_count = 1
+        # 3. 计算预期文件数（真实集数，而不是首尾差）
+        expected_count = len(episodes) if episodes else 1
         
         # 4. 智能判断分享模式（三个条件）
         
@@ -76,20 +65,36 @@ class TaskAnalyzer:
         )
         
         # 条件B：是否多集下载
-        is_multi_episode_download = len(parts) > 1
+        is_multi_episode_download = len(episodes) > 1
         
         # 条件C：是否从第1集开始
         starts_from_first_episode = False
-        if parts:
+        if episodes:
+            if episodes[0] == 1:
+                starts_from_first_episode = True
+        
+        # 条件D：集数是否连续无缺口（用于区分“全集下载”与“全集种子中部分下载”）
+        has_continuous_range = False
+        if episodes:
             try:
-                if int(parts[0]) == 1:
-                    starts_from_first_episode = True
+                min_ep = episodes[0]
+                max_ep = episodes[-1]
+                has_continuous_range = (max_ep - min_ep + 1 == len(episodes))
             except ValueError:
                 pass
         
         # 5. 决策逻辑（核心）
-        # 只有三个条件都满足才用folder模式
-        if is_full_season_torrent and is_multi_episode_download and starts_from_first_episode:
+        # 只有四个条件都满足才用folder模式
+        # - 文本包含"全集/完结"
+        # - 当前下载是多集
+        # - 从第1集开始
+        # - episodes展开后是连续区间（无缺集）
+        if (
+            is_full_season_torrent
+            and is_multi_episode_download
+            and starts_from_first_episode
+            and has_continuous_range
+        ):
             share_mode = 'folder'  # 整季文件夹分享
         else:
             share_mode = 'file'    # 文件打包分享
@@ -97,10 +102,61 @@ class TaskAnalyzer:
         logger.debug(
             f"【Enhanced115】判断结果：{share_mode}，"
             f"全季={is_full_season_torrent}，多集={is_multi_episode_download}，"
-            f"从1开始={starts_from_first_episode}，预期={expected_count}集"
+            f"从1开始={starts_from_first_episode}，连续={has_continuous_range}，"
+            f"episodes={episodes}，预期={expected_count}集"
         )
         
         return share_mode, expected_count
+    
+    @staticmethod
+    def _parse_episode_numbers(ep_str: str) -> list[int]:
+        """
+        解析episodes字符串，返回去重且排序后的集数列表。
+        
+        支持形式示例：
+        - "E01"                 → [1]
+        - "E01-E12"            → [1..12]
+        - "E01-E03、E10-E11"   → [1,2,3,10,11]
+        """
+        if not ep_str:
+            return []
+        
+        # 统一分隔符：中文逗号/顿号/空格 → 英文逗号
+        normalized = (
+            ep_str.replace("，", ",")
+            .replace("、", ",")
+            .replace(" ", ",")
+        )
+        segments = [seg.strip() for seg in normalized.split(",") if seg.strip()]
+        
+        episodes_set: set[int] = set()
+        
+        for seg in segments:
+            # 提取当前段中的所有数字
+            nums = re.findall(r'(\d+)', seg)
+            if not nums:
+                continue
+            
+            try:
+                if len(nums) == 1:
+                    # 单集，如 "E05"
+                    episodes_set.add(int(nums[0]))
+                else:
+                    # 优先按范围处理，如 "E01-E03"
+                    start = int(nums[0])
+                    end = int(nums[-1])
+                    if start <= end and ("-" in seg or "–" in seg or "~" in seg):
+                        for ep in range(start, end + 1):
+                            episodes_set.add(ep)
+                    else:
+                        # 保守处理：多数字但不是明显的区间，就逐个加入
+                        for n in nums:
+                            episodes_set.add(int(n))
+            except ValueError:
+                # 异常时忽略这一段，避免影响整体判断
+                continue
+        
+        return sorted(episodes_set)
     
     @staticmethod
     def query_message_text(download_history):
