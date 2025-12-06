@@ -122,6 +122,9 @@ class Enhanced115(_PluginBase):
         self._upload_queue = queue.Queue()
         self._upload_executor = None
         self._stop_event = threading.Event()
+        # 队列防重：记录当前已在队列中的文件（download_hash + file_path）
+        self._queued_files = set()
+        self._queue_lock = threading.Lock()
         
         # 统计
         self._stats = {
@@ -301,6 +304,40 @@ class Enhanced115(_PluginBase):
         except Exception as e:
             raise Exception(f"115客户端初始化失败：{str(e)}")
 
+    def _make_queue_key(self, download_hash: str, file_key: str) -> str:
+        """生成队列防重用的key"""
+        return f"{download_hash}::{file_key}"
+
+    def _is_file_queued(self, download_hash: str, file_key: str) -> bool:
+        """
+        检查文件是否已在上传队列中
+        """
+        if not download_hash or not file_key:
+            return False
+        key = self._make_queue_key(download_hash, file_key)
+        with self._queue_lock:
+            return key in self._queued_files
+
+    def _mark_file_queued(self, download_hash: str, file_key: str) -> None:
+        """
+        标记文件已加入上传队列
+        """
+        if not download_hash or not file_key:
+            return
+        key = self._make_queue_key(download_hash, file_key)
+        with self._queue_lock:
+            self._queued_files.add(key)
+
+    def _unmark_file_queued(self, download_hash: str, file_key: str) -> None:
+        """
+        从队列防重集合中移除文件标记
+        """
+        if not download_hash or not file_key:
+            return
+        key = self._make_queue_key(download_hash, file_key)
+        with self._queue_lock:
+            self._queued_files.discard(key)
+
     def _start_upload_workers(self):
         """启动上传工作线程"""
         self._stop_event.clear()
@@ -460,6 +497,21 @@ class Enhanced115(_PluginBase):
             
             # 映射路径
             local_path = transferinfo.target_item.path
+            file_key = str(local_path)
+
+            # 任务/队列层防重：已在上传中、已完成或已在队列中的文件不再重复入队
+            if self._task_manager:
+                if self._task_manager.is_file_uploading(download_hash, file_key):
+                    logger.debug(f"【Enhanced115】文件正在上传中，跳过重复入队：{transferinfo.target_item.name}")
+                    return
+                if self._task_manager.is_file_completed(download_hash, file_key):
+                    logger.debug(f"【Enhanced115】文件已完成上传，跳过重复入队：{transferinfo.target_item.name}")
+                    return
+
+            if self._is_file_queued(download_hash, file_key):
+                logger.debug(f"【Enhanced115】文件已在上传队列中，跳过重复入队：{transferinfo.target_item.name}")
+                return
+
             remote_path = map_local_to_remote(local_path, self._path_mappings)
             
             if not remote_path:
@@ -478,6 +530,7 @@ class Enhanced115(_PluginBase):
             }
             
             # 加入上传队列
+            self._mark_file_queued(download_hash, file_key)
             self._upload_queue.put(upload_task)
             self._stats['queue_size'] = self._upload_queue.qsize()
             
@@ -613,6 +666,9 @@ class Enhanced115(_PluginBase):
                 self._task_manager.mark_upload_failed(download_hash, file_key)
             self._stats['failed'] += 1
             raise
+        finally:
+            # 无论成功或失败，都从队列防重集合中移除
+            self._unmark_file_queued(download_hash, file_key)
         
         # 5. 查询数据库真实完成数量（不用内存计数）
         actual_count = self._count_completed_files(download_hash)
@@ -946,7 +1002,18 @@ class Enhanced115(_PluginBase):
                             self._reupload_file(record, file_path)
                             reupload_count += 1
                     elif record.dest_storage == 'local':
-                        # 未上传，重新上传
+                        # 未上传，重新上传（仅处理异常/历史任务，避免和进行中的任务抢占）
+                        download_hash = record.download_hash
+                        if self._task_manager and download_hash:
+                            task = self._task_manager.get_task(download_hash)
+                            if task and task.get('status') == 'pending':
+                                # 任务仍在进行中，交由正常TransferComplete流程处理
+                                logger.debug(
+                                    f"【Enhanced115】任务进行中，跳过扫描重新上传："
+                                    f"{file_path.name}（{download_hash[:8]}...）"
+                                )
+                                continue
+                        
                         logger.info(f"【Enhanced115】发现未上传文件，准备上传：{file_path.name}")
                         self._reupload_file(record, file_path)
                         reupload_count += 1
@@ -1070,6 +1137,11 @@ class Enhanced115(_PluginBase):
                         completed_files.remove(file_key)
                         self._task_manager.update_task(download_hash, {'completed_files': completed_files})
                     # 继续执行后面的上传逻辑
+
+            # 3. 检查是否已在上传队列中（避免与正常TransferComplete入口重复入队）
+            if self._is_file_queued(download_hash, file_key):
+                logger.debug(f"【Enhanced115】文件已在上传队列中，跳过：{file_path.name}")
+                return
             
             # 映射远程路径
             remote_path = map_local_to_remote(str(file_path), self._path_mappings)
@@ -1089,6 +1161,7 @@ class Enhanced115(_PluginBase):
             }
             
             # 加入上传队列
+            self._mark_file_queued(download_hash, file_key)
             self._upload_queue.put(upload_task)
             logger.info(f"【Enhanced115】已加入重新上传队列：{file_path.name}")
             
